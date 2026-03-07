@@ -61,7 +61,14 @@ export function createWebSendApi(params: {
           };
         }
       } else {
-        payload = { text };
+        const mentionMatches = (text || "").match(/@(\d{10,})/g);
+        const mentions = mentionMatches
+          ? mentionMatches.map((m) => {
+              const n = m.slice(1);
+              return n.length > 12 ? `${n}@lid` : `${n}@s.whatsapp.net`;
+            })
+          : [];
+        payload = mentions.length ? { text, mentions } : { text };
       }
       const result = await params.sock.sendMessage(jid, payload);
       const accountId = sendOptions?.accountId ?? params.defaultAccountId;

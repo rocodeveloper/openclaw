@@ -328,7 +328,17 @@ export async function monitorWebInbox(options: {
       }
     };
     const reply = async (text: string) => {
-      await sock.sendMessage(chatJid, { text });
+      const mentionMatches = (text || "").match(/@(\d{10,})/g);
+      const mentions = mentionMatches
+        ? mentionMatches.map((m) => {
+            const n = m.slice(1);
+            return n.length > 12 ? `${n}@lid` : `${n}@s.whatsapp.net`;
+          })
+        : [];
+      await sock.sendMessage(
+        chatJid,
+        mentions.length ? { text, mentions } : { text },
+      );
     };
     const sendMedia = async (payload: AnyMessageContent) => {
       await sock.sendMessage(chatJid, payload);
