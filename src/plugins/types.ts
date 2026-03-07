@@ -601,6 +601,8 @@ export type PluginHookToolContext = {
   toolName: string;
   /** Provider-specific tool call ID when available. */
   toolCallId?: string;
+  /** E.164 phone of the sender who triggered this agent turn. */
+  senderE164?: string;
 };
 
 // before_tool_call hook

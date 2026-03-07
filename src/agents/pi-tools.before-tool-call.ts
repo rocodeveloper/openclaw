@@ -13,6 +13,8 @@ export type HookContext = {
   sessionId?: string;
   runId?: string;
   loopDetection?: ToolLoopDetectionConfig;
+  /** E.164 phone of the sender who triggered this agent turn. */
+  senderE164?: string | null;
 };
 
 type HookOutcome = { blocked: true; reason: string } | { blocked: false; params: unknown };
@@ -161,6 +163,7 @@ export async function runBeforeToolCallHook(args: {
       ...(args.ctx?.sessionId ? { sessionId: args.ctx.sessionId } : {}),
       ...(args.ctx?.runId ? { runId: args.ctx.runId } : {}),
       ...(args.toolCallId ? { toolCallId: args.toolCallId } : {}),
+      ...(args.ctx?.senderE164 ? { senderE164: args.ctx.senderE164 } : {}),
     };
     const hookResult = await hookRunner.runBeforeToolCall(
       {
