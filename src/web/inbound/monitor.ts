@@ -1,3 +1,4 @@
+import { createServer } from "node:http";
 import type { AnyMessageContent, proto, WAMessage } from "@whiskeysockets/baileys";
 import { DisconnectReason, isJidGroup } from "@whiskeysockets/baileys";
 import { createInboundDebouncer } from "../../auto-reply/inbound-debounce.js";
@@ -462,6 +463,90 @@ export async function monitorWebInbox(options: {
     }
   };
   sock.ev.on("connection.update", handleConnectionUpdate);
+
+  // History sync: log synced messages so the graph tailer can ingest them
+  sock.ev.on("messaging-history.set", ({ messages, syncType }) => {
+    const msgList = messages || [];
+    inboundLogger.info({ count: msgList.length, syncType }, "history sync received");
+    for (const msg of msgList) {
+      try {
+        const key = msg.key || {};
+        const content = msg.message || {};
+        const body =
+          content.conversation ||
+          content.extendedTextMessage?.text ||
+          content.imageMessage?.caption ||
+          content.videoMessage?.caption ||
+          "";
+        if (!body && !content.imageMessage && !content.videoMessage && !content.documentMessage)
+          continue;
+        const participant = key.participant || key.remoteJid || "";
+        const senderE164Val = participant.includes("@")
+          ? "+" + participant.split("@")[0]
+          : participant;
+        const replyCtx = content.extendedTextMessage?.contextInfo;
+        inboundLogger.info(
+          {
+            from: key.remoteJid,
+            to: selfE164 ?? "me",
+            body: body || "[media]",
+            timestamp: msg.messageTimestamp ? Number(msg.messageTimestamp) * 1000 : Date.now(),
+            senderE164: senderE164Val || undefined,
+            senderName: msg.pushName ?? undefined,
+            senderJid: participant || undefined,
+            replyToId: replyCtx?.stanzaId ?? undefined,
+            replyToBody:
+              replyCtx?.quotedMessage?.conversation ??
+              replyCtx?.quotedMessage?.extendedTextMessage?.text ??
+              undefined,
+            messageId: key.id,
+            historySync: true,
+          },
+          "inbound message",
+        );
+      } catch {
+        // skip unparseable history messages
+      }
+    }
+  });
+
+  // History fetch HTTP endpoint
+  const historySrv = createServer((req, res) => {
+    res.setHeader("Content-Type", "application/json");
+    if (req.method === "POST" && req.url === "/fetch-history") {
+      let body = "";
+      req.on("data", (chunk: Buffer) => (body += chunk));
+      req.on("end", async () => {
+        try {
+          const { group, count = 50 } = JSON.parse(body);
+          if (!group) {
+            res.end(JSON.stringify({ ok: false, error: "missing group" }));
+            return;
+          }
+          inboundLogger.info({ group, count }, "history fetch requested");
+          const requestId = await sock.fetchMessageHistory(
+            count,
+            { remoteJid: group, id: "", fromMe: false },
+            Date.now(),
+          );
+          res.end(JSON.stringify({ ok: true, requestId, group, count }));
+        } catch (err) {
+          res.end(JSON.stringify({ ok: false, error: String(err) }));
+        }
+      });
+    } else if (req.url === "/health") {
+      res.end(JSON.stringify({ ok: true, connected: !!sock.user }));
+    } else {
+      res.statusCode = 404;
+      res.end(JSON.stringify({ error: "not found" }));
+    }
+  });
+  historySrv.listen(3111, "127.0.0.1", () =>
+    inboundLogger.info({ port: 3111 }, "history fetch server started"),
+  );
+  historySrv.on("error", (err) =>
+    inboundLogger.error({ error: String(err) }, "history fetch server error"),
+  );
 
   const sendApi = createWebSendApi({
     sock: {
