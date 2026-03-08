@@ -11,6 +11,8 @@ FORK_DIR="/root/openclaw-fork"
 REPO="rocodeveloper/openclaw"
 BRANCH="rocobot"
 ARTIFACT_DIR="/tmp/openclaw-build"
+INSTALL_DIR="/usr/lib/node_modules/openclaw"
+BIN_LINK="/usr/bin/openclaw"
 
 cd "$FORK_DIR"
 
@@ -82,11 +84,24 @@ fi
 echo "Artifact: $TARBALL"
 
 # ── Deploy ──────────────────────────────────────────────────────
+# Use tar + local npm install instead of npm install -g to avoid OOM
+# on low-memory VPS (npm install -g loads the entire dependency tree
+# into memory for resolution).
+
 echo "=== Stopping gateway ==="
 systemctl --user stop openclaw-gateway
 
-echo "=== Installing $TARBALL ==="
-npm install -g "$TARBALL"
+echo "=== Extracting $TARBALL ==="
+rm -rf "$INSTALL_DIR"
+mkdir -p "$INSTALL_DIR"
+tar xzf "$TARBALL" -C "$INSTALL_DIR" --strip-components=1
+
+echo "=== Installing dependencies ==="
+cd "$INSTALL_DIR"
+npm install --omit=dev --ignore-scripts 2>&1 | tail -3
+
+echo "=== Linking binary ==="
+ln -sf ../lib/node_modules/openclaw/openclaw.mjs "$BIN_LINK"
 
 echo "=== Starting gateway ==="
 systemctl --user start openclaw-gateway
