@@ -332,10 +332,7 @@ export async function monitorWebInbox(options: {
     const reply = async (text: string) => {
       const mentionMatches = (text || "").match(/@(\d{10,})/g);
       const mentions = mentionMatches
-        ? mentionMatches.map((m) => {
-            const n = m.slice(1);
-            return n.length > 12 ? `${n}@lid` : `${n}@s.whatsapp.net`;
-          })
+        ? mentionMatches.map((m) => `${m.slice(1)}@s.whatsapp.net`)
         : [];
       await sock.sendMessage(chatJid, mentions.length ? { text, mentions } : { text });
     };
