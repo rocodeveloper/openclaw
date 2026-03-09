@@ -35,7 +35,9 @@ export function createWebSendApi(params: {
       const jid = toWhatsappJid(to);
       let payload: AnyMessageContent;
       if (mediaBuffer && mediaType) {
-        if (mediaType.startsWith("image/")) {
+        if (mediaType === "image/webp") {
+          payload = { sticker: mediaBuffer, mimetype: "image/webp" } as AnyMessageContent;
+        } else if (mediaType.startsWith("image/")) {
           payload = {
             image: mediaBuffer,
             caption: text || undefined,
