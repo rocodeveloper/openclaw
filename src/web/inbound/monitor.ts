@@ -276,7 +276,9 @@ export async function monitorWebInbox(options: {
         return null;
       }
     }
-    const replyContext = describeReplyContext(msg.message as proto.IMessage | undefined);
+    const replyContext = describeReplyContext(msg.message as proto.IMessage | undefined, {
+      authDir: options.authDir,
+    });
 
     let mediaPath: string | undefined;
     let mediaType: string | undefined;
@@ -328,7 +330,11 @@ export async function monitorWebInbox(options: {
       }
     };
     const reply = async (text: string) => {
-      await sock.sendMessage(chatJid, { text });
+      const mentionMatches = (text || "").match(/@(\d{10,})/g);
+      const mentions = mentionMatches
+        ? mentionMatches.map((m) => `${m.slice(1)}@s.whatsapp.net`)
+        : [];
+      await sock.sendMessage(chatJid, mentions.length ? { text, mentions } : { text });
     };
     const sendMedia = async (payload: AnyMessageContent) => {
       await sock.sendMessage(chatJid, payload);
@@ -337,15 +343,37 @@ export async function monitorWebInbox(options: {
     const mentionedJids = extractMentionedJids(msg.message as proto.IMessage | undefined);
     const senderName = msg.pushName ?? undefined;
 
+    // Resolve LID mentions in body text to E164 so the model can use them for tagging
+    let resolvedBody = enriched.body;
+    if (mentionedJids?.length) {
+      for (const jid of mentionedJids) {
+        const digits = jid.replace(/@.*$/, "").replace(/:\d+$/, "");
+        const e164 = await resolveInboundJid(jid);
+        if (e164 && e164 !== `+${digits}`) {
+          // Replace the LID digits in message text with the resolved E164 digits
+          resolvedBody = resolvedBody.replace(
+            new RegExp(`@${digits}\\b`, "g"),
+            `@${e164.replace("+", "")}`,
+          );
+        }
+      }
+    }
+
     inboundLogger.info(
       {
         from: inbound.from,
         to: selfE164 ?? "me",
-        body: enriched.body,
+        body: resolvedBody,
         mediaPath: enriched.mediaPath,
         mediaType: enriched.mediaType,
         mediaFileName: enriched.mediaFileName,
         timestamp,
+        senderE164: inbound.senderE164 ?? undefined,
+        senderName,
+        senderJid: inbound.participantJid ?? undefined,
+        replyToId: enriched.replyContext?.id ?? undefined,
+        replyToBody: enriched.replyContext?.body ?? undefined,
+        messageId: inbound.id,
       },
       "inbound message",
     );
@@ -355,7 +383,7 @@ export async function monitorWebInbox(options: {
       conversationId: inbound.from,
       to: selfE164 ?? "me",
       accountId: inbound.access.resolvedAccountId,
-      body: enriched.body,
+      body: resolvedBody,
       pushName: senderName,
       timestamp,
       chatType: inbound.group ? "group" : "direct",
