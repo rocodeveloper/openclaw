@@ -127,7 +127,12 @@ export async function deliverWebReply(params: {
         );
         logVerbose(`Web auto-reply media source: ${mediaUrl} (kind ${media.kind})`);
       }
-      if (media.kind === "image") {
+      if (media.contentType === "image/webp") {
+        await sendWithRetry(
+          () => msg.sendMedia({ sticker: media.buffer, mimetype: "image/webp" }),
+          "media:sticker",
+        );
+      } else if (media.kind === "image") {
         await sendWithRetry(
           () =>
             msg.sendMedia({
