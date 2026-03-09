@@ -343,11 +343,27 @@ export async function monitorWebInbox(options: {
     const mentionedJids = extractMentionedJids(msg.message as proto.IMessage | undefined);
     const senderName = msg.pushName ?? undefined;
 
+    // Resolve LID mentions in body text to E164 so the model can use them for tagging
+    let resolvedBody = enriched.body;
+    if (mentionedJids?.length) {
+      for (const jid of mentionedJids) {
+        const digits = jid.replace(/@.*$/, "").replace(/:\d+$/, "");
+        const e164 = await resolveInboundJid(jid);
+        if (e164 && e164 !== `+${digits}`) {
+          // Replace the LID digits in message text with the resolved E164 digits
+          resolvedBody = resolvedBody.replace(
+            new RegExp(`@${digits}\\b`, "g"),
+            `@${e164.replace("+", "")}`,
+          );
+        }
+      }
+    }
+
     inboundLogger.info(
       {
         from: inbound.from,
         to: selfE164 ?? "me",
-        body: enriched.body,
+        body: resolvedBody,
         mediaPath: enriched.mediaPath,
         mediaType: enriched.mediaType,
         mediaFileName: enriched.mediaFileName,
@@ -367,7 +383,7 @@ export async function monitorWebInbox(options: {
       conversationId: inbound.from,
       to: selfE164 ?? "me",
       accountId: inbound.access.resolvedAccountId,
-      body: enriched.body,
+      body: resolvedBody,
       pushName: senderName,
       timestamp,
       chatType: inbound.group ? "group" : "direct",
