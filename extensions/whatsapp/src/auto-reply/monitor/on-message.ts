@@ -10,6 +10,7 @@ import type { MentionConfig } from "../mentions.js";
 import type { WebInboundMsg } from "../types.js";
 import { maybeBroadcastMessage } from "./broadcast.js";
 import type { EchoTracker } from "./echo.js";
+import { handleUnregisteredGroup } from "./group-auto-register.js";
 import type { GroupHistoryEntry } from "./group-gating.js";
 import { applyGroupGating } from "./group-gating.js";
 import { updateLastRouteInBackground } from "./last-route.js";
@@ -142,6 +143,13 @@ export function createWebOnMessageHandler(params: {
         replyLogger: params.replyLogger,
       });
       if (!gating.shouldProcess) {
+        await handleUnregisteredGroup({
+          cfg: params.cfg,
+          msg,
+          conversationId,
+          baseMentionConfig: params.baseMentionConfig,
+          logVerbose,
+        });
         return;
       }
     } else {
