@@ -127,8 +127,9 @@ export function createWebOnMessageHandler(params: {
         warn: params.replyLogger.warn.bind(params.replyLogger),
       });
 
+      const freshCfg = loadConfig();
       const gating = applyGroupGating({
-        cfg: params.cfg,
+        cfg: freshCfg,
         msg,
         conversationId,
         groupHistoryKey,
@@ -144,10 +145,9 @@ export function createWebOnMessageHandler(params: {
       });
       if (!gating.shouldProcess) {
         await handleUnregisteredGroup({
-          cfg: params.cfg,
+          cfg: freshCfg,
           msg,
           conversationId,
-          baseMentionConfig: params.baseMentionConfig,
           logVerbose,
         });
         return;

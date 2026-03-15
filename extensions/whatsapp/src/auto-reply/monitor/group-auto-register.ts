@@ -7,28 +7,26 @@
 import type { loadConfig } from "../../../../../src/config/config.js";
 import { writeConfigFile } from "../../../../../src/config/io.js";
 import { normalizeE164 } from "../../../../../src/utils.js";
-import type { MentionConfig } from "../mentions.js";
-import { resolveOwnerList } from "../mentions.js";
 import type { WebInboundMsg } from "../types.js";
 
-function isOwner(baseMentionConfig: MentionConfig, msg: WebInboundMsg): boolean {
+function isOwnerSender(cfg: ReturnType<typeof loadConfig>, msg: WebInboundMsg): boolean {
   const sender = normalizeE164(msg.senderE164 ?? "");
   if (!sender) return false;
-  const owners = resolveOwnerList(baseMentionConfig, msg.selfE164 ?? undefined);
-  return owners.includes(sender);
+  // Use the elevated allowFrom list (tools.elevated.allowFrom.whatsapp)
+  // which contains the owner's phone number
+  const elevatedList = (cfg as any).tools?.elevated?.allowFrom?.whatsapp ?? [];
+  return elevatedList.some((p: string) => normalizeE164(p) === sender);
 }
 
 export async function handleUnregisteredGroup(params: {
   cfg: ReturnType<typeof loadConfig>;
   msg: WebInboundMsg;
   conversationId: string;
-  baseMentionConfig: MentionConfig;
   logVerbose: (msg: string) => void;
 }): Promise<void> {
   const { cfg, msg, conversationId } = params;
 
-  // Only handle owner messages
-  if (!isOwner(params.baseMentionConfig, msg)) {
+  if (!isOwnerSender(cfg, msg)) {
     return;
   }
 
