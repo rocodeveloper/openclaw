@@ -96,7 +96,7 @@ export function applyGroupGating(params: ApplyGroupGatingParams) {
   const groupPolicy = resolveGroupPolicyFor(params.cfg, params.conversationId);
   if (groupPolicy.allowlistEnabled && !groupPolicy.allowed) {
     params.logVerbose(`Skipping group message ${params.conversationId} (not in allowlist)`);
-    return { shouldProcess: false };
+    return { shouldProcess: false, unregistered: true } as const;
   }
 
   noteGroupMember(

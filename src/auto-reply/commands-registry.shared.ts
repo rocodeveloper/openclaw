@@ -610,6 +610,20 @@ export function buildBuiltinChatCommands(): ChatCommandDefinition[] {
       category: "session",
     }),
     defineChatCommand({
+      key: "register",
+      description: "Register this group.",
+      textAlias: "/register",
+      scope: "text",
+      category: "session",
+    }),
+    defineChatCommand({
+      key: "unregister",
+      description: "Unregister this group.",
+      textAlias: "/unregister",
+      scope: "text",
+      category: "session",
+    }),
+    defineChatCommand({
       key: "compact",
       nativeName: "compact",
       description: "Compact the session context.",

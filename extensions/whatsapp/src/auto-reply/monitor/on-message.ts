@@ -10,7 +10,7 @@ import type { MentionConfig } from "../mentions.js";
 import type { WebInboundMsg } from "../types.js";
 import { maybeBroadcastMessage } from "./broadcast.js";
 import type { EchoTracker } from "./echo.js";
-import { handleUnregisteredGroup } from "./group-auto-register.js";
+import { handleUnregisteredGroup, handleGroupUnregister } from "./group-auto-register.js";
 import type { GroupHistoryEntry } from "./group-gating.js";
 import { applyGroupGating } from "./group-gating.js";
 import { updateLastRouteInBackground } from "./last-route.js";
@@ -144,7 +144,20 @@ export function createWebOnMessageHandler(params: {
         replyLogger: params.replyLogger,
       });
       if (!gating.shouldProcess) {
-        await handleUnregisteredGroup({
+        if ("unregistered" in gating && gating.unregistered) {
+          await handleUnregisteredGroup({
+            cfg: freshCfg,
+            msg,
+            conversationId,
+            logVerbose,
+          });
+        }
+        return;
+      }
+      // Handle /unregister for registered groups (owner only)
+      const cmdText = (msg.body ?? "").replace(/@\d+/g, "").trim().toLowerCase();
+      if (cmdText === "/unregister" || cmdText === "unregister") {
+        await handleGroupUnregister({
           cfg: freshCfg,
           msg,
           conversationId,
