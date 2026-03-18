@@ -29,15 +29,28 @@ const IMAGE_EXTENSION_NAMES = [
   "heic",
   "heif",
 ] as const;
+const AUDIO_EXTENSION_NAMES = [
+  "ogg",
+  "mp3",
+  "wav",
+  "m4a",
+  "aac",
+  "flac",
+  "opus",
+  "wma",
+] as const;
+const MEDIA_EXTENSION_NAMES = [...IMAGE_EXTENSION_NAMES, ...AUDIO_EXTENSION_NAMES];
 const IMAGE_EXTENSIONS = new Set(IMAGE_EXTENSION_NAMES.map((ext) => `.${ext}`));
+const MEDIA_EXTENSIONS = new Set(MEDIA_EXTENSION_NAMES.map((ext) => `.${ext}`));
 const IMAGE_EXTENSION_PATTERN = IMAGE_EXTENSION_NAMES.join("|");
+const MEDIA_EXTENSION_PATTERN = MEDIA_EXTENSION_NAMES.join("|");
 const MEDIA_ATTACHED_PATH_REGEX_SOURCE =
-  "^\\s*(.+?\\.(?:" + IMAGE_EXTENSION_PATTERN + "))\\s*(?:\\(|$|\\|)";
+  "^\\s*(.+?\\.(?:" + MEDIA_EXTENSION_PATTERN + "))\\s*(?:\\(|$|\\|)";
 const MESSAGE_IMAGE_REGEX_SOURCE =
-  "\\[Image:\\s*source:\\s*([^\\]]+\\.(?:" + IMAGE_EXTENSION_PATTERN + "))\\]";
-const FILE_URL_REGEX_SOURCE = "file://[^\\s<>\"'`\\]]+\\.(?:" + IMAGE_EXTENSION_PATTERN + ")";
+  "\\[Image:\\s*source:\\s*([^\\]]+\\.(?:" + MEDIA_EXTENSION_PATTERN + "))\\]";
+const FILE_URL_REGEX_SOURCE = "file://[^\\s<>\"'`\\]]+\\.(?:" + MEDIA_EXTENSION_PATTERN + ")";
 const PATH_REGEX_SOURCE =
-  "(?:^|\\s|[\"'`(])((\\.\\.?/|[~/])[^\\s\"'`()\\[\\]]*\\.(?:" + IMAGE_EXTENSION_PATTERN + "))";
+  "(?:^|\\s|[\"'`(])((\\.\\.?/|[~/])[^\\s\"'`()\\[\\]]*\\.(?:" + MEDIA_EXTENSION_PATTERN + "))";
 
 /**
  * Result of detecting an image reference in text.
@@ -57,6 +70,11 @@ export interface DetectedImageRef {
 function isImageExtension(filePath: string): boolean {
   const ext = path.extname(filePath).toLowerCase();
   return IMAGE_EXTENSIONS.has(ext);
+}
+
+function isMediaExtension(filePath: string): boolean {
+  const ext = path.extname(filePath).toLowerCase();
+  return MEDIA_EXTENSIONS.has(ext);
 }
 
 function normalizeRefForDedupe(raw: string): string {
@@ -106,7 +124,8 @@ export function detectImageReferences(prompt: string): DetectedImageRef[] {
     if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
       return;
     }
-    if (!isImageExtension(trimmed)) {
+    if (!isMediaExtension(trimmed)) {
+      log.debug(`Native media: skipping non-media extension: ${trimmed}`);
       return;
     }
     try {
@@ -208,6 +227,7 @@ export async function loadImageFromRef(
 ): Promise<ImageContent | null> {
   try {
     let targetPath = ref.resolved;
+    log.debug(`[native-media] loading ref type=${ref.type} resolved=${ref.resolved} workspaceOnly=${options?.workspaceOnly}`);
 
     // Resolve paths relative to sandbox or workspace as needed
     if (options?.sandbox) {
@@ -253,15 +273,19 @@ export async function loadImageFromRef(
         })
       : await loadWebMedia(targetPath, options?.maxBytes);
 
-    if (media.kind !== "image") {
-      log.debug(`Native image: not an image file: ${targetPath} (got ${media.kind})`);
+    log.debug(`[native-media] loaded ${targetPath} kind=${media.kind} contentType=${media.contentType} size=${media.buffer.length}`);
+    if (media.kind !== "image" && media.kind !== "audio") {
+      log.debug(`[native-media] rejecting unsupported kind: ${targetPath} (got ${media.kind})`);
       return null;
     }
 
-    // EXIF orientation is already normalized by loadWebMedia -> resizeToJpeg
-    // Default to JPEG since optimization converts images to JPEG format
-    const mimeType = media.contentType ?? "image/jpeg";
+    // For audio: pass through as-is with the original MIME type.
+    // Gemini accepts audio via the same inlineData mechanism as images.
+    // For images: EXIF orientation is already normalized by loadWebMedia -> resizeToJpeg.
+    // Default to JPEG since optimization converts images to JPEG format.
+    const mimeType = media.contentType ?? (media.kind === "audio" ? "audio/ogg" : "image/jpeg");
     const data = media.buffer.toString("base64");
+    log.debug(`[native-media] inlining ${targetPath} as type=image mimeType=${mimeType} base64Len=${data.length}`);
 
     return { type: "image", data, mimeType };
   } catch (err) {

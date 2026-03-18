@@ -201,6 +201,12 @@ export async function processMessage(params: {
     shouldClearGroupHistory = !(params.suppressGroupHistoryClear ?? false);
   }
 
+  // Inject audio file path into prompt body so detectImageReferences can find it
+  // and inline the audio as base64 for Gemini native audio understanding.
+  if (params.msg.mediaPath && params.msg.mediaType?.startsWith("audio/")) {
+    combinedBody = combinedBody + "\n" + params.msg.mediaPath;
+  }
+
   // Echo detection uses combined body so we don't respond twice.
   const combinedEchoKey = params.buildCombinedEchoKey({
     sessionKey: params.route.sessionKey,
