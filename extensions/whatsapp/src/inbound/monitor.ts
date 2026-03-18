@@ -361,6 +361,39 @@ export async function monitorWebInbox(options: {
       logVerbose(`Inbound media download failed: ${String(err)}`);
     }
 
+    // If the current message has no media but replies to an audio/media message,
+    // download the quoted message's media so it gets inlined in the user message
+    // for native Gemini audio understanding.
+    if (!mediaPath && replyContext?.body?.includes("<media:")) {
+      try {
+        const rawMessage = msg.message as import("@whiskeysockets/baileys").proto.IMessage | undefined;
+        const { normalizeMessageContent, getContentType } = await import("@whiskeysockets/baileys");
+        const normalized = normalizeMessageContent(rawMessage);
+        const contentType = normalized ? getContentType(normalized) : undefined;
+        const candidate = contentType && normalized ? (normalized as Record<string, unknown>)[contentType] : undefined;
+        const contextInfo = candidate && typeof candidate === "object" && "contextInfo" in candidate
+          ? (candidate as { contextInfo?: import("@whiskeysockets/baileys").proto.IContextInfo }).contextInfo
+          : undefined;
+        const quotedMessage = contextInfo?.quotedMessage
+          ? normalizeMessageContent(contextInfo.quotedMessage as import("@whiskeysockets/baileys").proto.IMessage)
+          : undefined;
+        if (quotedMessage) {
+          const syntheticMsg = { message: quotedMessage, key: msg.key } as import("@whiskeysockets/baileys").WAMessage;
+          const quotedMedia = await downloadInboundMedia(syntheticMsg, sock);
+          if (quotedMedia) {
+            const maxMb = typeof options.mediaMaxMb === "number" && options.mediaMaxMb > 0 ? options.mediaMaxMb : 50;
+            const saved = await saveMediaBuffer(quotedMedia.buffer, quotedMedia.mimetype, "inbound", maxMb * 1024 * 1024, quotedMedia.fileName);
+            mediaPath = saved.path;
+            mediaType = quotedMedia.mimetype;
+            mediaFileName = quotedMedia.fileName;
+            logVerbose(`[reply-media] Downloaded quoted media: ${mediaType} -> ${mediaPath}`);
+          }
+        }
+      } catch (err) {
+        logVerbose(`[reply-media] Failed to download quoted media: ${String(err)}`);
+      }
+    }
+
     return {
       body,
       location: location ?? undefined,
