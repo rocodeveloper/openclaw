@@ -12,6 +12,7 @@ import { assertSandboxPath } from "../../sandbox-paths.js";
 import type { SandboxFsBridge } from "../../sandbox/fs-bridge.js";
 import { sanitizeImageBlocks } from "../../tool-images.js";
 import { log } from "../logger.js";
+import { getMediaDir } from "../../../media/store.js";
 
 /**
  * Common image file extensions for detection.
@@ -230,12 +231,17 @@ export async function loadImageFromRef(
       targetPath = path.resolve(workspaceDir, targetPath);
     }
     if (options?.workspaceOnly && !options?.sandbox) {
-      const root = options?.sandbox?.root ?? workspaceDir;
-      await assertSandboxPath({
-        filePath: targetPath,
-        cwd: root,
-        root,
-      });
+      // Allow reading from the gateway's media inbound directory even with workspaceOnly,
+      // since the gateway itself saved the file there during inbound message processing.
+      const mediaInboundRoot = path.resolve(getMediaDir(), "inbound") + path.sep;
+      if (!path.resolve(targetPath).startsWith(mediaInboundRoot)) {
+        const root = options?.sandbox?.root ?? workspaceDir;
+        await assertSandboxPath({
+          filePath: targetPath,
+          cwd: root,
+          root,
+        });
+      }
     }
 
     // loadWebMedia handles local file paths (including file:// URLs)

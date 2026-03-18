@@ -1,6 +1,7 @@
 import type { AnyMessageContent, proto, WAMessage } from "@whiskeysockets/baileys";
 import { DisconnectReason, isJidGroup } from "@whiskeysockets/baileys";
 import { createInboundDebouncer, formatLocationText } from "openclaw/plugin-sdk/channel-inbound";
+import { loadConfig } from "openclaw/plugin-sdk/config-runtime";
 import { recordChannelActivity } from "openclaw/plugin-sdk/channel-runtime";
 import { saveMediaBuffer } from "openclaw/plugin-sdk/media-runtime";
 import { logVerbose, shouldLogVerbose } from "openclaw/plugin-sdk/runtime-env";
@@ -510,6 +511,39 @@ export async function monitorWebInbox(options: {
       const enriched = await enrichInboundMessage(msg);
       if (!enriched) {
         continue;
+      }
+
+      // Copy group media into the bound agent's workspace under media/inbound/{groupSlug}/
+      // and update enriched.mediaPath so downstream code uses the workspace copy directly.
+      if (inbound.group && enriched.mediaPath) {
+        try {
+          const cfg = loadConfig();
+          const binding = (cfg.bindings ?? []).find(
+            (b: any) =>
+              b.match?.channel === "whatsapp" &&
+              b.match?.peer?.kind === "group" &&
+              b.match?.peer?.id === inbound.from,
+          );
+          if (binding?.agentId) {
+            const agentCfg = (cfg.agents?.list ?? []).find(
+              (a: any) => a.id === binding.agentId,
+            );
+            const ws = agentCfg?.workspace;
+            if (ws) {
+              const nodePath = await import("node:path");
+              const nodeFs = await import("node:fs");
+              const groupSlug = inbound.from.replace(/@.*$/, "");
+              const destDir = nodePath.default.join(ws, "media", "inbound", groupSlug);
+              nodeFs.default.mkdirSync(destDir, { recursive: true });
+              const fileName = nodePath.default.basename(enriched.mediaPath);
+              const dest = nodePath.default.join(destDir, fileName);
+              nodeFs.default.copyFileSync(enriched.mediaPath, dest);
+              enriched.mediaPath = dest;
+            }
+          }
+        } catch (err) {
+          logVerbose(`[media-stage] Failed to stage group media: ${String(err)}`);
+        }
       }
 
       await enqueueInboundMessage(msg, inbound, enriched);
