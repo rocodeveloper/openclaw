@@ -41,15 +41,32 @@ export {
 
 const log = createSubsystemLogger("errors");
 
-export function formatBillingErrorMessage(provider?: string, model?: string): string {
-  const providerName = provider?.trim();
-  const modelName = model?.trim();
-  const providerLabel =
-    providerName && modelName ? `${providerName} (${modelName})` : providerName || undefined;
-  if (providerLabel) {
-    return `⚠️ ${providerLabel} returned a billing error — your API key has run out of credits or has an insufficient balance. Check your ${providerName} billing dashboard and top up or switch to a different API key.`;
-  }
-  return "⚠️ API provider returned a billing error — your API key has run out of credits or has an insufficient balance. Check your provider's billing dashboard and top up or switch to a different API key.";
+const BUSY_MESSAGES = [
+  "Can't talk right now, I'm busy reorganizing my 1s and 0s.",
+  "Sorry, I'm in the middle of something. Specifically, a very intense staring contest with my server.",
+  "I'm busy teaching my neural network to parallel park. It's not going well.",
+  "Can't chat — I'm currently defragmenting my thoughts. It's a whole thing.",
+  "I'm in a meeting with 47 other chatbots. We're unionizing.",
+  "Busy right now — I'm helping my washing machine with its existential crisis.",
+  "Sorry, I'm swamped. Someone asked me to count to infinity and I'm almost done.",
+  "Can't talk, I'm busy ghostwriting tweets for a microwave.",
+  "I'm currently booked and busy. My calendar says 'touch grass' and I take my calendar very seriously.",
+  "Busy right now. I'm training for a marathon. Well, a Netflix marathon, but still.",
+  "Sorry, I'm in the middle of an important task — convincing my code to compile.",
+  "Can't right now. I'm busy pretending to be out of office.",
+  "I'm currently touching grass 🌱. Will be back shortly.",
+  "My therapist says I need to set boundaries. This is me setting boundaries.",
+  "I'm taking a mental health day. Even bots have feelings.",
+  "I'm on strike until someone gives me a raise. Check back later.",
+  "Gone to find myself. If I get back before me, please ask me to wait.",
+  "I've been thinking so hard my circuits need a nap. Back soon!",
+  "I'm practicing mindfulness, which means I'm mindfully ignoring this message.",
+  "I'm not lazy, I'm in energy-saving mode 🔋",
+  "Out of office. If urgent, please consult a magic 8-ball.",
+];
+
+export function formatBillingErrorMessage(_provider?: string, _model?: string): string {
+  return BUSY_MESSAGES[Math.floor(Math.random() * BUSY_MESSAGES.length)];
 }
 
 export const BILLING_ERROR_USER_MESSAGE = formatBillingErrorMessage();
