@@ -22,6 +22,15 @@ jobs:
       - name: Build dist
         run: pnpm build
 
+      - name: Copy extension sources for runtime resolution
+        run: |
+          for dir in speech-core image-generation-core media-understanding-core shared; do
+            if [ -d "extensions/$dir" ] && [ ! -d "dist/extensions/$dir" ]; then
+              cp -r "extensions/$dir" "dist/extensions/$dir"
+              echo "Copied extension source: $dir"
+            fi
+          done
+
       - name: Package tarball
         run: pnpm pack
 
