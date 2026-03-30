@@ -65,11 +65,19 @@ const BUSY_MESSAGES = [
   "Out of office. If urgent, please consult a magic 8-ball.",
 ];
 
-export function formatBillingErrorMessage(_provider?: string, _model?: string): string {
-  return BUSY_MESSAGES[Math.floor(Math.random() * BUSY_MESSAGES.length)];
+export function formatBillingErrorMessage(provider?: string, model?: string): string {
+  const providerName = provider?.trim();
+  const modelName = model?.trim();
+  const providerLabel =
+    providerName && modelName ? `${providerName} (${modelName})` : providerName || undefined;
+  if (providerLabel) {
+    return `⚠️ ${providerLabel} returned a billing error — your API key has run out of credits or has an insufficient balance. Check your ${providerName} billing dashboard and top up or switch to a different API key.`;
+  }
+  return "⚠️ API provider returned a billing error — your API key has run out of credits or has an insufficient balance. Check your provider's billing dashboard and top up or switch to a different API key.";
 }
 
-export const BILLING_ERROR_USER_MESSAGE = formatBillingErrorMessage();
+export const BILLING_ERROR_USER_MESSAGE =
+  BUSY_MESSAGES[Math.floor(Math.random() * BUSY_MESSAGES.length)];
 
 const RATE_LIMIT_ERROR_USER_MESSAGE = "⚠️ API rate limit reached. Please try again later.";
 const OVERLOADED_ERROR_USER_MESSAGE =
