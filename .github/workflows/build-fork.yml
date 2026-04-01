@@ -18,7 +18,10 @@ jobs:
         uses: ./.github/actions/setup-node-env
         with:
           install-bun: "false"
-          frozen-lockfile: "false"
+          install-deps: "false"
+
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile --ignore-scripts=false --config.engine-strict=false --config.enable-pre-post-scripts=true
 
       - name: Build dist
         run: pnpm build
