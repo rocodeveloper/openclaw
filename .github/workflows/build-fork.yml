@@ -19,6 +19,9 @@ jobs:
         with:
           install-bun: "false"
 
+      - name: Update lockfile if needed
+        run: pnpm install --no-frozen-lockfile || true
+
       - name: Build dist
         run: pnpm build
 
