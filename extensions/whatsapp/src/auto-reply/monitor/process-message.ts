@@ -418,10 +418,12 @@ export async function processMessage(params: {
         }
       },
       deliver: async (payload: ReplyPayload, info) => {
-        if (info.kind !== "final") {
+        if (info.kind !== "final" && !(payload.mediaUrls && payload.mediaUrls.length > 0)) {
           // Only deliver final replies to external messaging channels (WhatsApp).
           // Block (reasoning/thinking) and tool updates are meant for the internal
           // web UI only; sending them here leaks chain-of-thought to end users.
+          // Exception: block replies with media (e.g. TTS audio flushed during
+          // handleAgentEnd after a rate-limited attempt) must still be delivered.
           return;
         }
         await deliverWebReply({
