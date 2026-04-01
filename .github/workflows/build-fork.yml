@@ -18,9 +18,7 @@ jobs:
         uses: ./.github/actions/setup-node-env
         with:
           install-bun: "false"
-
-      - name: Update lockfile if needed
-        run: pnpm install --no-frozen-lockfile || true
+          frozen-lockfile: "false"
 
       - name: Build dist
         run: pnpm build
