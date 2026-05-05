@@ -5,10 +5,12 @@ import { resolveAgentRoute } from "openclaw/plugin-sdk/routing";
 import { buildGroupHistoryKey } from "openclaw/plugin-sdk/routing";
 import { logVerbose } from "openclaw/plugin-sdk/runtime-env";
 import { normalizeE164 } from "openclaw/plugin-sdk/text-runtime";
+import { getPrimaryIdentityId, getSenderIdentity } from "../../identity.js";
 import type { MentionConfig } from "../mentions.js";
 import type { WebInboundMsg } from "../types.js";
 import { maybeBroadcastMessage } from "./broadcast.js";
 import type { EchoTracker } from "./echo.js";
+import { handleUnregisteredGroup, handleGroupUnregister } from "./group-auto-register.js";
 import type { GroupHistoryEntry } from "./group-gating.js";
 import { applyGroupGating } from "./group-gating.js";
 import { updateLastRouteInBackground } from "./last-route.js";
@@ -96,6 +98,7 @@ export function createWebOnMessageHandler(params: {
     }
 
     if (msg.chatType === "group") {
+      const sender = getSenderIdentity(msg);
       const metaCtx = {
         From: msg.from,
         To: msg.to,
@@ -104,9 +107,9 @@ export function createWebOnMessageHandler(params: {
         ChatType: msg.chatType,
         ConversationLabel: conversationId,
         GroupSubject: msg.groupSubject,
-        SenderName: msg.senderName,
-        SenderId: msg.senderJid?.trim() || msg.senderE164,
-        SenderE164: msg.senderE164,
+        SenderName: sender.name ?? undefined,
+        SenderId: getPrimaryIdentityId(sender) ?? undefined,
+        SenderE164: sender.e164 ?? undefined,
         Provider: "whatsapp",
         Surface: "whatsapp",
         OriginatingChannel: "whatsapp",
@@ -124,8 +127,9 @@ export function createWebOnMessageHandler(params: {
         warn: params.replyLogger.warn.bind(params.replyLogger),
       });
 
+      const freshCfg = loadConfig();
       const gating = applyGroupGating({
-        cfg: params.cfg,
+        cfg: freshCfg,
         msg,
         conversationId,
         groupHistoryKey,
@@ -140,12 +144,37 @@ export function createWebOnMessageHandler(params: {
         replyLogger: params.replyLogger,
       });
       if (!gating.shouldProcess) {
+        if ("unregistered" in gating && gating.unregistered) {
+          await handleUnregisteredGroup({
+            cfg: freshCfg,
+            msg,
+            conversationId,
+            accountId: route.accountId,
+            logVerbose,
+          });
+        }
+        return;
+      }
+      // Handle /unregister for registered groups (owner only)
+      const cmdText = (msg.body ?? "").replace(/@\d+/g, "").trim().toLowerCase();
+      if (cmdText === "/unregister" || cmdText === "unregister") {
+        await handleGroupUnregister({
+          cfg: freshCfg,
+          msg,
+          conversationId,
+          accountId: route.accountId,
+          logVerbose,
+        });
         return;
       }
     } else {
       // Ensure `peerId` for DMs is stable and stored as E.164 when possible.
-      if (!msg.senderE164 && peerId && peerId.startsWith("+")) {
-        msg.senderE164 = normalizeE164(peerId) ?? msg.senderE164;
+      if (!msg.sender?.e164 && !msg.senderE164 && peerId && peerId.startsWith("+")) {
+        const normalized = normalizeE164(peerId);
+        if (normalized) {
+          msg.sender = { ...(msg.sender ?? {}), e164: normalized };
+          msg.senderE164 = normalized;
+        }
       }
     }
 

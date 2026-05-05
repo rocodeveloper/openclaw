@@ -23,6 +23,92 @@ function createTestRuntime() {
   };
 }
 
+function createExecDryRunBatch(params: { markerPath: string }) {
+  const response = JSON.stringify({
+    protocolVersion: 1,
+    values: {
+      dryrun_id: "ok",
+    },
+  });
+  const script = [
+    'const fs = require("node:fs");',
+    `fs.writeFileSync(${JSON.stringify(params.markerPath)}, "dryrun\\n", "utf8");`,
+    `process.stdout.write(${JSON.stringify(response)});`,
+  ].join("");
+  return [
+    {
+      path: "secrets.providers.runner",
+      provider: {
+        source: "exec",
+        command: process.execPath,
+        args: ["-e", script],
+        allowInsecurePath: true,
+        timeoutMs: 15_000,
+        noOutputTimeoutMs: 15_000,
+      },
+    },
+    {
+      path: "channels.discord.token",
+      ref: {
+        source: "exec",
+        provider: "runner",
+        id: "dryrun_id",
+      },
+    },
+  ];
+}
+
+async function withExecDryRunConfigHarness(
+  prefix: string,
+  run: (params: {
+    batchPath: string;
+    configPath: string;
+    markerPath: string;
+    runtime: ReturnType<typeof createTestRuntime>;
+  }) => Promise<void>,
+) {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  const configPath = path.join(tempDir, "openclaw.json");
+  const batchPath = path.join(tempDir, "batch.json");
+  const markerPath = path.join(tempDir, "marker.txt");
+  const envSnapshot = captureEnv(["OPENCLAW_CONFIG_PATH", "OPENCLAW_TEST_FAST"]);
+  try {
+    fs.writeFileSync(
+      configPath,
+      `${JSON.stringify(
+        {
+          gateway: { port: 18789 },
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+    fs.writeFileSync(
+      batchPath,
+      `${JSON.stringify(createExecDryRunBatch({ markerPath }), null, 2)}\n`,
+      "utf8",
+    );
+
+    process.env.OPENCLAW_TEST_FAST = "1";
+    process.env.OPENCLAW_CONFIG_PATH = configPath;
+    clearConfigCache();
+    clearRuntimeConfigSnapshot();
+
+    await run({
+      batchPath,
+      configPath,
+      markerPath,
+      runtime: createTestRuntime(),
+    });
+  } finally {
+    envSnapshot.restore();
+    clearConfigCache();
+    clearRuntimeConfigSnapshot();
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+}
+
 describe("config cli integration", () => {
   it("supports batch-file dry-run and then writes real config changes", async () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-config-cli-int-"));
@@ -182,5 +268,50 @@ describe("config cli integration", () => {
       clearRuntimeConfigSnapshot();
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
+  });
+
+  it("skips exec provider execution during dry-run by default", async () => {
+    await withExecDryRunConfigHarness("openclaw-config-cli-int-exec-skip-", async (params) => {
+      const before = fs.readFileSync(params.configPath, "utf8");
+      await runConfigSet({
+        cliOptions: {
+          batchFile: params.batchPath,
+          dryRun: true,
+        },
+        runtime: params.runtime.runtime,
+      });
+      const after = fs.readFileSync(params.configPath, "utf8");
+
+      expect(after).toBe(before);
+      expect(fs.existsSync(params.markerPath)).toBe(false);
+      expect(
+        params.runtime.logs.some((line) =>
+          line.includes("Dry run note: skipped 1 exec SecretRef resolvability check(s)."),
+        ),
+      ).toBe(true);
+    });
+  });
+
+  it("executes exec providers during dry-run when --allow-exec is set", async () => {
+    await withExecDryRunConfigHarness("openclaw-config-cli-int-exec-allow-", async (params) => {
+      const before = fs.readFileSync(params.configPath, "utf8");
+      await runConfigSet({
+        cliOptions: {
+          batchFile: params.batchPath,
+          dryRun: true,
+          allowExec: true,
+        },
+        runtime: params.runtime.runtime,
+      });
+      const after = fs.readFileSync(params.configPath, "utf8");
+
+      expect(after).toBe(before);
+      expect(fs.existsSync(params.markerPath)).toBe(true);
+      expect(
+        params.runtime.logs.some((line) =>
+          line.includes("Dry run note: skipped 1 exec SecretRef resolvability check(s)."),
+        ),
+      ).toBe(false);
+    });
   });
 });

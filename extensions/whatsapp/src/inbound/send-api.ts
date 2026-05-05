@@ -1,5 +1,5 @@
 import type { AnyMessageContent, WAPresence } from "@whiskeysockets/baileys";
-import { recordChannelActivity } from "openclaw/plugin-sdk/infra-runtime";
+import { recordChannelActivity } from "openclaw/plugin-sdk/channel-runtime";
 import { toWhatsappJid } from "openclaw/plugin-sdk/text-runtime";
 import type { ActiveWebSendOptions } from "../active-listener.js";
 
@@ -35,7 +35,9 @@ export function createWebSendApi(params: {
       const jid = toWhatsappJid(to);
       let payload: AnyMessageContent;
       if (mediaBuffer && mediaType) {
-        if (mediaType.startsWith("image/")) {
+        if (mediaType === "image/webp") {
+          payload = { sticker: mediaBuffer, mimetype: "image/webp" } as AnyMessageContent;
+        } else if (mediaType.startsWith("image/")) {
           payload = {
             image: mediaBuffer,
             caption: text || undefined,
@@ -61,7 +63,11 @@ export function createWebSendApi(params: {
           };
         }
       } else {
-        payload = { text };
+        const mentionMatches = (text || "").match(/@(\d{10,})/g);
+        const mentions = mentionMatches
+          ? mentionMatches.map((m) => `${m.slice(1)}@s.whatsapp.net`)
+          : [];
+        payload = mentions.length ? { text, mentions } : { text };
       }
       const result = await params.sock.sendMessage(jid, payload);
       const accountId = sendOptions?.accountId ?? params.defaultAccountId;

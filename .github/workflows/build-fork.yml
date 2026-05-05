@@ -1,0 +1,47 @@
+name: Build Fork
+
+on:
+  push:
+    branches: [rocobot]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: Setup Node environment
+        uses: ./.github/actions/setup-node-env
+        with:
+          install-bun: "false"
+          install-deps: "false"
+
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile --ignore-scripts=false --config.engine-strict=false --config.enable-pre-post-scripts=true
+
+      - name: Build dist
+        run: pnpm build
+
+      - name: Copy extension sources missing from dist
+        run: |
+          for dir in extensions/*/; do
+            name=$(basename "$dir")
+            if [ -f "$dir/package.json" ] && [ ! -d "dist/extensions/$name" ]; then
+              cp -r "$dir" "dist/extensions/$name"
+              echo "Copied extension source: $name"
+            fi
+          done
+
+      - name: Package tarball
+        run: pnpm pack
+
+      - name: Upload tarball
+        uses: actions/upload-artifact@v4
+        with:
+          name: openclaw-fork
+          path: openclaw-*.tgz
+          retention-days: 30

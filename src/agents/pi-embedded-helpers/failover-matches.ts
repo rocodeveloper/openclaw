@@ -25,6 +25,19 @@ const ERROR_PATTERNS = {
     /service[_ ]unavailable.*(?:overload|capacity|high[_ ]demand)|(?:overload|capacity|high[_ ]demand).*service[_ ]unavailable/i,
     "high demand",
   ],
+  serverError: [
+    "an error occurred while processing",
+    "internal server error",
+    "internal_error",
+    "server_error",
+    "service temporarily unavailable",
+    "service_unavailable",
+    "bad gateway",
+    "gateway timeout",
+    "upstream error",
+    "upstream connect error",
+    "connection reset",
+  ],
   timeout: [
     "timeout",
     "timed out",
@@ -91,6 +104,7 @@ const ERROR_PATTERNS = {
     /\b403\b/,
     "no credentials found",
     "no api key found",
+    /\bfailed to (?:extract|parse|validate|decode)\b.*\btoken\b/,
   ],
   format: [
     "string should match pattern",
@@ -140,6 +154,10 @@ export function isBillingErrorMessage(raw: string): boolean {
     return false;
   }
 
+  if (value.includes("monthlylimiterror") || value.includes("spending limit")) {
+    return true;
+  }
+
   if (raw.length > BILLING_ERROR_MAX_LENGTH) {
     return BILLING_ERROR_HARD_402_RE.test(value);
   }
@@ -167,4 +185,8 @@ export function isAuthErrorMessage(raw: string): boolean {
 
 export function isOverloadedErrorMessage(raw: string): boolean {
   return matchesErrorPatterns(raw, ERROR_PATTERNS.overloaded);
+}
+
+export function isServerErrorMessage(raw: string): boolean {
+  return matchesErrorPatterns(raw, ERROR_PATTERNS.serverError);
 }

@@ -1,16 +1,22 @@
 import type { AnyMessageContent, proto, WAMessage } from "@whiskeysockets/baileys";
 import { DisconnectReason, isJidGroup } from "@whiskeysockets/baileys";
-import { formatLocationText } from "openclaw/plugin-sdk/channel-runtime";
-import { recordChannelActivity } from "openclaw/plugin-sdk/infra-runtime";
+import { createInboundDebouncer, formatLocationText } from "openclaw/plugin-sdk/channel-inbound";
+import { loadConfig } from "openclaw/plugin-sdk/config-runtime";
+import { recordChannelActivity } from "openclaw/plugin-sdk/channel-runtime";
 import { saveMediaBuffer } from "openclaw/plugin-sdk/media-runtime";
-import { createInboundDebouncer } from "openclaw/plugin-sdk/reply-runtime";
 import { logVerbose, shouldLogVerbose } from "openclaw/plugin-sdk/runtime-env";
 import { createSubsystemLogger } from "openclaw/plugin-sdk/runtime-env";
 import { getChildLogger } from "openclaw/plugin-sdk/text-runtime";
-import { jidToE164, resolveJidToE164 } from "openclaw/plugin-sdk/text-runtime";
+import { resolveJidToE164 } from "openclaw/plugin-sdk/text-runtime";
+import { readWebSelfIdentity } from "../auth-store.js";
+import { getPrimaryIdentityId, resolveComparableIdentity } from "../identity.js";
 import { createWaSocket, getStatusCode, waitForWaConnection } from "../session.js";
 import { checkInboundAccessControl } from "./access-control.js";
-import { isRecentInboundMessage } from "./dedupe.js";
+import {
+  isRecentInboundMessage,
+  isRecentOutboundMessage,
+  rememberRecentOutboundMessage,
+} from "./dedupe.js";
 import {
   describeReplyContext,
   extractLocationData,
@@ -18,9 +24,16 @@ import {
   extractMentionedJids,
   extractText,
 } from "./extract.js";
+import { attachEmitterListener, closeInboundMonitorSocket } from "./lifecycle.js";
 import { downloadInboundMedia } from "./media.js";
 import { createWebSendApi } from "./send-api.js";
 import type { WebInboundMessage, WebListenerCloseReason } from "./types.js";
+
+const LOGGED_OUT_STATUS = DisconnectReason?.loggedOut ?? 401;
+
+function isGroupJid(jid: string): boolean {
+  return (typeof isJidGroup === "function" ? isJidGroup(jid) : jid.endsWith("@g.us")) === true;
+}
 
 export async function monitorWebInbox(options: {
   verbose: boolean;
@@ -65,14 +78,21 @@ export async function monitorWebInbox(options: {
     logVerbose(`Failed to send 'available' presence on connect: ${String(err)}`);
   }
 
-  const selfJid = sock.user?.id;
-  const selfE164 = selfJid ? jidToE164(selfJid) : null;
+  const self = await readWebSelfIdentity(
+    options.authDir,
+    sock.user as { id?: string | null; lid?: string | null } | undefined,
+  );
   const debouncer = createInboundDebouncer<WebInboundMessage>({
     debounceMs: options.debounceMs ?? 0,
     buildKey: (msg) => {
+      const sender = msg.sender;
       const senderKey =
         msg.chatType === "group"
-          ? (msg.senderJid ?? msg.senderE164 ?? msg.senderName ?? msg.from)
+          ? (getPrimaryIdentityId(sender ?? null) ??
+            msg.senderJid ??
+            msg.senderE164 ??
+            msg.senderName ??
+            msg.from)
           : msg.from;
       if (!senderKey) {
         return null;
@@ -92,7 +112,7 @@ export async function monitorWebInbox(options: {
       }
       const mentioned = new Set<string>();
       for (const entry of entries) {
-        for (const jid of entry.mentionedJids ?? []) {
+        for (const jid of entry.mentions ?? entry.mentionedJids ?? []) {
           mentioned.add(jid);
         }
       }
@@ -103,6 +123,7 @@ export async function monitorWebInbox(options: {
       const combinedMessage: WebInboundMessage = {
         ...last,
         body: combinedBody,
+        mentions: mentioned.size > 0 ? Array.from(mentioned) : undefined,
         mentionedJids: mentioned.size > 0 ? Array.from(mentioned) : undefined,
       };
       await options.onMessage(combinedMessage);
@@ -121,6 +142,27 @@ export async function monitorWebInbox(options: {
 
   const resolveInboundJid = async (jid: string | null | undefined): Promise<string | null> =>
     resolveJidToE164(jid, { authDir: options.authDir, lidLookup });
+
+  const rememberOutboundMessage = (remoteJid: string, result: unknown) => {
+    const messageId =
+      typeof result === "object" && result && "key" in result
+        ? String((result as { key?: { id?: string } }).key?.id ?? "")
+        : "";
+    if (!messageId) {
+      return;
+    }
+    rememberRecentOutboundMessage({
+      accountId: options.accountId,
+      remoteJid,
+      messageId,
+    });
+  };
+
+  const sendTrackedMessage = async (jid: string, content: AnyMessageContent) => {
+    const result = await sock.sendMessage(jid, content);
+    rememberOutboundMessage(jid, result);
+    return result;
+  };
 
   const getGroupMeta = async (jid: string) => {
     const cached = groupMetaCache.get(jid);
@@ -176,7 +218,22 @@ export async function monitorWebInbox(options: {
       return null;
     }
 
-    const group = isJidGroup(remoteJid) === true;
+    const group = isGroupJid(remoteJid);
+    // Drop echoes of messages the gateway itself sent (tracked by sendTrackedMessage).
+    // Applies to both groups and DMs/self-chat — without this, self-chat mode
+    // re-processes the bot's own replies as new inbound user messages.
+    if (
+      Boolean(msg.key?.fromMe) &&
+      id &&
+      isRecentOutboundMessage({
+        accountId: options.accountId,
+        remoteJid,
+        messageId: id,
+      })
+    ) {
+      logVerbose(`Skipping recent outbound WhatsApp echo ${id} for ${remoteJid}`);
+      return null;
+    }
     if (id) {
       const dedupeKey = `${options.accountId}:${remoteJid}:${id}`;
       if (isRecentInboundMessage(dedupeKey)) {
@@ -208,14 +265,14 @@ export async function monitorWebInbox(options: {
     const access = await checkInboundAccessControl({
       accountId: options.accountId,
       from,
-      selfE164,
+      selfE164: self.e164 ?? null,
       senderE164,
       group,
       pushName: msg.pushName ?? undefined,
       isFromMe: Boolean(msg.key?.fromMe),
       messageTimestampMs,
       connectedAtMs,
-      sock: { sendMessage: (jid, content) => sock.sendMessage(jid, content) },
+      sock: { sendMessage: (jid, content) => sendTrackedMessage(jid, content) },
       remoteJid,
     });
     if (!access.allowed) {
@@ -304,6 +361,39 @@ export async function monitorWebInbox(options: {
       logVerbose(`Inbound media download failed: ${String(err)}`);
     }
 
+    // If the current message has no media but replies to an audio/media message,
+    // download the quoted message's media so it gets inlined in the user message
+    // for native Gemini audio understanding.
+    if (!mediaPath && replyContext?.body?.includes("<media:")) {
+      try {
+        const rawMessage = msg.message as import("@whiskeysockets/baileys").proto.IMessage | undefined;
+        const { normalizeMessageContent, getContentType } = await import("@whiskeysockets/baileys");
+        const normalized = normalizeMessageContent(rawMessage);
+        const contentType = normalized ? getContentType(normalized) : undefined;
+        const candidate = contentType && normalized ? (normalized as Record<string, unknown>)[contentType] : undefined;
+        const contextInfo = candidate && typeof candidate === "object" && "contextInfo" in candidate
+          ? (candidate as { contextInfo?: import("@whiskeysockets/baileys").proto.IContextInfo }).contextInfo
+          : undefined;
+        const quotedMessage = contextInfo?.quotedMessage
+          ? normalizeMessageContent(contextInfo.quotedMessage as import("@whiskeysockets/baileys").proto.IMessage)
+          : undefined;
+        if (quotedMessage) {
+          const syntheticMsg = { message: quotedMessage, key: msg.key } as import("@whiskeysockets/baileys").WAMessage;
+          const quotedMedia = await downloadInboundMedia(syntheticMsg, sock);
+          if (quotedMedia) {
+            const maxMb = typeof options.mediaMaxMb === "number" && options.mediaMaxMb > 0 ? options.mediaMaxMb : 50;
+            const saved = await saveMediaBuffer(quotedMedia.buffer, quotedMedia.mimetype, "inbound", maxMb * 1024 * 1024, quotedMedia.fileName);
+            mediaPath = saved.path;
+            mediaType = quotedMedia.mimetype;
+            mediaFileName = quotedMedia.fileName;
+            logVerbose(`[reply-media] Downloaded quoted media: ${mediaType} -> ${mediaPath}`);
+          }
+        }
+      } catch (err) {
+        logVerbose(`[reply-media] Failed to download quoted media: ${String(err)}`);
+      }
+    }
+
     return {
       body,
       location: location ?? undefined,
@@ -328,24 +418,50 @@ export async function monitorWebInbox(options: {
       }
     };
     const reply = async (text: string) => {
-      await sock.sendMessage(chatJid, { text });
+      const mentionMatches = (text || "").match(/@(\d{10,})/g);
+      const mentions = mentionMatches
+        ? mentionMatches.map((m) => `${m.slice(1)}@s.whatsapp.net`)
+        : [];
+      await sendTrackedMessage(chatJid, mentions.length ? { text, mentions } : { text });
     };
     const sendMedia = async (payload: AnyMessageContent) => {
-      await sock.sendMessage(chatJid, payload);
+      await sendTrackedMessage(chatJid, payload);
     };
     const timestamp = inbound.messageTimestampMs;
     const mentionedJids = extractMentionedJids(msg.message as proto.IMessage | undefined);
     const senderName = msg.pushName ?? undefined;
 
+    // Resolve LID mentions in body text to E164 so the model can use them for tagging
+    let resolvedBody = enriched.body;
+    if (mentionedJids?.length) {
+      for (const jid of mentionedJids) {
+        const digits = jid.replace(/@.*$/, "").replace(/:\d+$/, "");
+        const e164 = await resolveInboundJid(jid);
+        if (e164 && e164 !== `+${digits}`) {
+          // Replace the LID digits in message text with the resolved E164 digits
+          resolvedBody = resolvedBody.replace(
+            new RegExp(`@${digits}\\b`, "g"),
+            `@${e164.replace("+", "")}`,
+          );
+        }
+      }
+    }
+
     inboundLogger.info(
       {
         from: inbound.from,
-        to: selfE164 ?? "me",
-        body: enriched.body,
+        to: self.e164 ?? "me",
+        body: resolvedBody,
         mediaPath: enriched.mediaPath,
         mediaType: enriched.mediaType,
         mediaFileName: enriched.mediaFileName,
         timestamp,
+        senderE164: inbound.senderE164 ?? undefined,
+        senderName,
+        senderJid: inbound.participantJid ?? undefined,
+        replyToId: enriched.replyContext?.id ?? undefined,
+        replyToBody: enriched.replyContext?.body ?? undefined,
+        messageId: inbound.id,
       },
       "inbound message",
     );
@@ -353,26 +469,35 @@ export async function monitorWebInbox(options: {
       id: inbound.id,
       from: inbound.from,
       conversationId: inbound.from,
-      to: selfE164 ?? "me",
+      to: self.e164 ?? "me",
       accountId: inbound.access.resolvedAccountId,
-      body: enriched.body,
+      body: resolvedBody,
       pushName: senderName,
       timestamp,
       chatType: inbound.group ? "group" : "direct",
       chatId: inbound.remoteJid,
+      sender: resolveComparableIdentity({
+        jid: inbound.participantJid,
+        e164: inbound.senderE164 ?? undefined,
+        name: senderName,
+      }),
       senderJid: inbound.participantJid,
       senderE164: inbound.senderE164 ?? undefined,
       senderName,
+      replyTo: enriched.replyContext ?? undefined,
       replyToId: enriched.replyContext?.id,
       replyToBody: enriched.replyContext?.body,
-      replyToSender: enriched.replyContext?.sender,
-      replyToSenderJid: enriched.replyContext?.senderJid,
-      replyToSenderE164: enriched.replyContext?.senderE164,
+      replyToSender: enriched.replyContext?.sender?.label ?? undefined,
+      replyToSenderJid: enriched.replyContext?.sender?.jid ?? undefined,
+      replyToSenderE164: enriched.replyContext?.sender?.e164 ?? undefined,
       groupSubject: inbound.groupSubject,
       groupParticipants: inbound.groupParticipants,
+      mentions: mentionedJids ?? undefined,
       mentionedJids: mentionedJids ?? undefined,
-      selfJid,
-      selfE164,
+      self,
+      selfJid: self.jid ?? undefined,
+      selfLid: self.lid ?? undefined,
+      selfE164: self.e164 ?? undefined,
       fromMe: Boolean(msg.key?.fromMe),
       location: enriched.location ?? undefined,
       sendComposing,
@@ -427,11 +552,42 @@ export async function monitorWebInbox(options: {
         continue;
       }
 
+      // Copy group media into the bound agent's workspace under media/inbound/{groupSlug}/
+      // and update enriched.mediaPath so downstream code uses the workspace copy directly.
+      if (inbound.group && enriched.mediaPath) {
+        try {
+          const cfg = loadConfig();
+          const binding = (cfg.bindings ?? []).find(
+            (b: any) =>
+              b.match?.channel === "whatsapp" &&
+              b.match?.peer?.kind === "group" &&
+              b.match?.peer?.id === inbound.from,
+          );
+          if (binding?.agentId) {
+            const agentCfg = (cfg.agents?.list ?? []).find(
+              (a: any) => a.id === binding.agentId,
+            );
+            const ws = agentCfg?.workspace;
+            if (ws) {
+              const nodePath = await import("node:path");
+              const nodeFs = await import("node:fs");
+              const groupSlug = inbound.from.replace(/@.*$/, "");
+              const destDir = nodePath.default.join(ws, "media", "inbound", groupSlug);
+              nodeFs.default.mkdirSync(destDir, { recursive: true });
+              const fileName = nodePath.default.basename(enriched.mediaPath);
+              const dest = nodePath.default.join(destDir, fileName);
+              nodeFs.default.copyFileSync(enriched.mediaPath, dest);
+              enriched.mediaPath = dest;
+            }
+          }
+        } catch (err) {
+          logVerbose(`[media-stage] Failed to stage group media: ${String(err)}`);
+        }
+      }
+
       await enqueueInboundMessage(msg, inbound, enriched);
     }
   };
-  sock.ev.on("messages.upsert", handleMessagesUpsert);
-
   const handleConnectionUpdate = (
     update: Partial<import("@whiskeysockets/baileys").ConnectionState>,
   ) => {
@@ -440,7 +596,7 @@ export async function monitorWebInbox(options: {
         const status = getStatusCode(update.lastDisconnect?.error);
         resolveClose({
           status,
-          isLoggedOut: status === DisconnectReason.loggedOut,
+          isLoggedOut: status === LOGGED_OUT_STATUS,
           error: update.lastDisconnect?.error,
         });
       }
@@ -449,11 +605,28 @@ export async function monitorWebInbox(options: {
       resolveClose({ status: undefined, isLoggedOut: false, error: err });
     }
   };
-  sock.ev.on("connection.update", handleConnectionUpdate);
+  const detachMessagesUpsert = attachEmitterListener(
+    sock.ev as unknown as {
+      on: (event: string, listener: (...args: unknown[]) => void) => void;
+      off?: (event: string, listener: (...args: unknown[]) => void) => void;
+      removeListener?: (event: string, listener: (...args: unknown[]) => void) => void;
+    },
+    "messages.upsert",
+    handleMessagesUpsert as unknown as (...args: unknown[]) => void,
+  );
+  const detachConnectionUpdate = attachEmitterListener(
+    sock.ev as unknown as {
+      on: (event: string, listener: (...args: unknown[]) => void) => void;
+      off?: (event: string, listener: (...args: unknown[]) => void) => void;
+      removeListener?: (event: string, listener: (...args: unknown[]) => void) => void;
+    },
+    "connection.update",
+    handleConnectionUpdate as unknown as (...args: unknown[]) => void,
+  );
 
   const sendApi = createWebSendApi({
     sock: {
-      sendMessage: (jid: string, content: AnyMessageContent) => sock.sendMessage(jid, content),
+      sendMessage: (jid: string, content: AnyMessageContent) => sendTrackedMessage(jid, content),
       sendPresenceUpdate: (presence, jid?: string) => sock.sendPresenceUpdate(presence, jid),
     },
     defaultAccountId: options.accountId,
@@ -462,24 +635,9 @@ export async function monitorWebInbox(options: {
   return {
     close: async () => {
       try {
-        const ev = sock.ev as unknown as {
-          off?: (event: string, listener: (...args: unknown[]) => void) => void;
-          removeListener?: (event: string, listener: (...args: unknown[]) => void) => void;
-        };
-        const messagesUpsertHandler = handleMessagesUpsert as unknown as (
-          ...args: unknown[]
-        ) => void;
-        const connectionUpdateHandler = handleConnectionUpdate as unknown as (
-          ...args: unknown[]
-        ) => void;
-        if (typeof ev.off === "function") {
-          ev.off("messages.upsert", messagesUpsertHandler);
-          ev.off("connection.update", connectionUpdateHandler);
-        } else if (typeof ev.removeListener === "function") {
-          ev.removeListener("messages.upsert", messagesUpsertHandler);
-          ev.removeListener("connection.update", connectionUpdateHandler);
-        }
-        sock.ws?.close();
+        detachMessagesUpsert();
+        detachConnectionUpdate();
+        closeInboundMonitorSocket(sock);
       } catch (err) {
         logVerbose(`Socket close failed: ${String(err)}`);
       }

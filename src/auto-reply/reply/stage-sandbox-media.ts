@@ -15,6 +15,7 @@ import {
 } from "../../media/inbound-path-policy.js";
 import { getMediaDir, MEDIA_MAX_BYTES } from "../../media/store.js";
 import { CONFIG_DIR } from "../../utils.js";
+import { resolveAgentIdFromSessionKey } from "../../routing/session-key.js";
 import type { MsgContext, TemplateContext } from "../templating.js";
 
 const STAGED_MEDIA_MAX_BYTES = MEDIA_MAX_BYTES;
@@ -43,7 +44,16 @@ export async function stageSandboxMedia(params: {
   const remoteMediaCacheDir = ctx.MediaRemoteHost
     ? path.join(CONFIG_DIR, "media", "remote-cache", sessionKey)
     : null;
-  const effectiveWorkspaceDir = sandbox?.workspaceDir ?? remoteMediaCacheDir;
+
+  // For non-Docker workspaceOnly agents, fall back to the agent workspace so media
+  // gets staged into <workspace>/media/inbound/ and is accessible within the sandbox.
+  const agentId = resolveAgentIdFromSessionKey(sessionKey);
+  const agentCfg = agentId
+    ? (cfg.agents?.list ?? []).find((a: any) => a.id === agentId)
+    : undefined;
+  const isWorkspaceOnly = agentCfg?.tools?.fs?.workspaceOnly === true;
+  const effectiveWorkspaceDir =
+    sandbox?.workspaceDir ?? remoteMediaCacheDir ?? (isWorkspaceOnly ? workspaceDir : null);
   if (!effectiveWorkspaceDir) {
     return;
   }
@@ -62,6 +72,13 @@ export async function stageSandboxMedia(params: {
     if (!source || staged.has(source)) {
       continue;
     }
+    // Skip staging if the source is already inside the effective workspace
+    // (e.g. group media already copied into workspace/media/inbound/{groupSlug}/).
+    if (path.resolve(source).startsWith(path.resolve(effectiveWorkspaceDir) + path.sep)) {
+      const relativePath = path.relative(effectiveWorkspaceDir, source);
+      staged.set(source, relativePath.split(path.sep).join(path.posix.sep));
+      continue;
+    }
     const allowed = await isAllowedSourcePath({
       source,
       mediaRemoteHost: ctx.MediaRemoteHost,
@@ -74,7 +91,7 @@ export async function stageSandboxMedia(params: {
     if (!fileName) {
       continue;
     }
-    const relativeDest = sandbox ? path.join("media", "inbound", fileName) : fileName;
+    const relativeDest = sandbox || isWorkspaceOnly ? path.join("media", "inbound", fileName) : fileName;
     const dest = path.join(effectiveWorkspaceDir, relativeDest);
 
     try {
@@ -105,8 +122,8 @@ export async function stageSandboxMedia(params: {
       continue;
     }
 
-    // For sandbox use relative path, for remote cache use absolute path
-    const stagedPath = sandbox ? path.posix.join("media", "inbound", fileName) : dest;
+    // For sandbox/workspaceOnly use relative path, for remote cache use absolute path
+    const stagedPath = sandbox || isWorkspaceOnly ? path.posix.join("media", "inbound", fileName) : dest;
     staged.set(source, stagedPath);
   }
 

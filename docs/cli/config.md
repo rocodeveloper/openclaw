@@ -1,5 +1,5 @@
 ---
-summary: "CLI reference for `openclaw config` (get/set/unset/file/validate)"
+summary: "CLI reference for `openclaw config` (get/set/unset/file/schema/validate)"
 read_when:
   - You want to read or edit config non-interactively
 title: "config"
@@ -7,7 +7,7 @@ title: "config"
 
 # `openclaw config`
 
-Config helpers for non-interactive edits in `openclaw.json`: get/set/unset/validate
+Config helpers for non-interactive edits in `openclaw.json`: get/set/unset/file/schema/validate
 values by path and print the active config file. Run without a subcommand to
 open the configure wizard (same as `openclaw configure`).
 
@@ -15,19 +15,34 @@ open the configure wizard (same as `openclaw configure`).
 
 ```bash
 openclaw config file
+openclaw config schema
 openclaw config get browser.executablePath
 openclaw config set browser.executablePath "/usr/bin/google-chrome"
 openclaw config set agents.defaults.heartbeat.every "2h"
 openclaw config set agents.list[0].tools.exec.node "node-id-or-name"
 openclaw config set channels.discord.token --ref-provider default --ref-source env --ref-id DISCORD_BOT_TOKEN
 openclaw config set secrets.providers.vaultfile --provider-source file --provider-path /etc/openclaw/secrets.json --provider-mode json
-openclaw config unset tools.web.search.apiKey
+openclaw config unset plugins.entries.brave.config.webSearch.apiKey
 openclaw config set channels.discord.token --ref-provider default --ref-source env --ref-id DISCORD_BOT_TOKEN --dry-run
 openclaw config validate
 openclaw config validate --json
 ```
 
-## Paths
+### `config schema`
+
+Print the generated JSON schema for `openclaw.json` to stdout as plain text.
+
+```bash
+openclaw config schema
+```
+
+Pipe it into a file when you want to inspect or validate it with other tools:
+
+```bash
+openclaw config schema > openclaw.schema.json
+```
+
+### Paths
 
 Paths use dot or bracket notation:
 
@@ -176,19 +191,31 @@ openclaw config set channels.discord.token \
   --ref-id DISCORD_BOT_TOKEN \
   --dry-run \
   --json
+
+openclaw config set channels.discord.token \
+  --ref-provider vault \
+  --ref-source exec \
+  --ref-id discord/token \
+  --dry-run \
+  --allow-exec
 ```
 
 Dry-run behavior:
 
-- Builder mode: requires full SecretRef resolvability for changed refs/providers.
-- JSON mode (`--strict-json`, `--json`, or batch mode): requires full resolvability and schema validation.
+- Builder mode: runs SecretRef resolvability checks for changed refs/providers.
+- JSON mode (`--strict-json`, `--json`, or batch mode): runs schema validation plus SecretRef resolvability checks.
+- Exec SecretRef checks are skipped by default during dry-run to avoid command side effects.
+- Use `--allow-exec` with `--dry-run` to opt in to exec SecretRef checks (this may execute provider commands).
+- `--allow-exec` is dry-run only and errors if used without `--dry-run`.
 
 `--dry-run --json` prints a machine-readable report:
 
 - `ok`: whether dry-run passed
 - `operations`: number of assignments evaluated
 - `checks`: whether schema/resolvability checks ran
-- `refsChecked`: number of refs resolved during dry-run
+- `checks.resolvabilityComplete`: whether resolvability checks ran to completion (false when exec refs are skipped)
+- `refsChecked`: number of refs actually resolved during dry-run
+- `skippedExecRefs`: number of exec refs skipped because `--allow-exec` was not set
 - `errors`: structured schema/resolvability failures when `ok=false`
 
 ### JSON Output Shape
@@ -202,8 +229,10 @@ Dry-run behavior:
   checks: {
     schema: boolean,
     resolvability: boolean,
+    resolvabilityComplete: boolean,
   },
   refsChecked: number,
+  skippedExecRefs: number,
   errors?: [
     {
       kind: "schema" | "resolvability",
@@ -224,9 +253,11 @@ Success example:
   "inputModes": ["builder"],
   "checks": {
     "schema": false,
-    "resolvability": true
+    "resolvability": true,
+    "resolvabilityComplete": true
   },
-  "refsChecked": 1
+  "refsChecked": 1,
+  "skippedExecRefs": 0
 }
 ```
 
@@ -240,9 +271,11 @@ Failure example:
   "inputModes": ["builder"],
   "checks": {
     "schema": false,
-    "resolvability": true
+    "resolvability": true,
+    "resolvabilityComplete": true
   },
   "refsChecked": 1,
+  "skippedExecRefs": 0,
   "errors": [
     {
       "kind": "resolvability",
@@ -257,6 +290,7 @@ If dry-run fails:
 
 - `config schema validation failed`: your post-change config shape is invalid; fix path/value or provider/ref object shape.
 - `SecretRef assignment(s) could not be resolved`: referenced provider/ref currently cannot resolve (missing env var, invalid file pointer, exec provider failure, or provider/source mismatch).
+- `Dry run note: skipped <n> exec SecretRef resolvability check(s)`: dry-run skipped exec refs; rerun with `--allow-exec` if you need exec resolvability validation.
 - For batch mode, fix failing entries and rerun `--dry-run` before writing.
 
 ## Subcommands
