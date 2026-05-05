@@ -149,6 +149,7 @@ export function createWebOnMessageHandler(params: {
             cfg: freshCfg,
             msg,
             conversationId,
+            accountId: route.accountId,
             logVerbose,
           });
         }
@@ -161,6 +162,7 @@ export function createWebOnMessageHandler(params: {
           cfg: freshCfg,
           msg,
           conversationId,
+          accountId: route.accountId,
           logVerbose,
         });
         return;

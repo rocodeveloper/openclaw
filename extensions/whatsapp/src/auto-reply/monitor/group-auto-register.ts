@@ -24,6 +24,43 @@ function isOwnerSender(
 }
 
 /**
+ * Returns the account-config key matching `accountId` case-insensitively,
+ * or undefined if no such account is configured.
+ */
+function findAccountKey(
+  accounts: Record<string, unknown> | undefined,
+  accountId: string | undefined,
+): string | undefined {
+  if (!accounts || !accountId) return undefined;
+  if (Object.hasOwn(accounts, accountId)) return accountId;
+  const target = accountId.toLowerCase();
+  return Object.keys(accounts).find((k) => k.toLowerCase() === target);
+}
+
+/**
+ * Mirrors the SDK group-policy resolver:
+ *   accounts[accountId]?.groups ?? channels.whatsapp.groups
+ * Ensures the registered group lands where the gating check will read it.
+ * Mutates `cfg` and returns the groups object to write into.
+ */
+function ensureGroupsContainer(
+  cfg: any,
+  accountId: string | undefined,
+): Record<string, unknown> {
+  if (!cfg.channels) cfg.channels = {};
+  if (!cfg.channels.whatsapp) cfg.channels.whatsapp = {};
+  const wa = cfg.channels.whatsapp;
+  const accountKey = findAccountKey(wa.accounts, accountId);
+  if (accountKey) {
+    const account = wa.accounts[accountKey];
+    if (!account.groups) account.groups = {};
+    return account.groups;
+  }
+  if (!wa.groups) wa.groups = {};
+  return wa.groups;
+}
+
+/**
  * Called when group-gating blocks a message (unregistered group).
  * Handles /register and sends "unregistered" notice for owner.
  */
@@ -31,9 +68,10 @@ export async function handleUnregisteredGroup(params: {
   cfg: ReturnType<typeof loadConfig>;
   msg: WebInboundMsg;
   conversationId: string;
+  accountId?: string;
   logVerbose: (msg: string) => void;
 }): Promise<void> {
-  const { cfg, msg, conversationId } = params;
+  const { cfg, msg, conversationId, accountId } = params;
 
   if (!isOwnerSender(cfg, msg)) {
     return;
@@ -50,13 +88,8 @@ export async function handleUnregisteredGroup(params: {
     try {
       const newCfg = JSON.parse(JSON.stringify(cfg));
 
-      if (!newCfg.channels) newCfg.channels = {};
-      if (!newCfg.channels.whatsapp) newCfg.channels.whatsapp = {};
-      if (!newCfg.channels.whatsapp.groups)
-        newCfg.channels.whatsapp.groups = {};
-      newCfg.channels.whatsapp.groups[conversationId] = {
-        requireMention: true,
-      };
+      const groups = ensureGroupsContainer(newCfg, accountId);
+      groups[conversationId] = { requireMention: true };
 
       if (!newCfg.bindings) newCfg.bindings = [];
       const hasBinding = newCfg.bindings.some(
@@ -119,9 +152,10 @@ export async function handleGroupUnregister(params: {
   cfg: ReturnType<typeof loadConfig>;
   msg: WebInboundMsg;
   conversationId: string;
+  accountId?: string;
   logVerbose: (msg: string) => void;
 }): Promise<void> {
-  const { cfg, msg, conversationId } = params;
+  const { cfg, msg, conversationId, accountId } = params;
 
   if (!isOwnerSender(cfg, msg)) {
     return;
@@ -130,8 +164,18 @@ export async function handleGroupUnregister(params: {
   try {
     const newCfg = JSON.parse(JSON.stringify(cfg));
 
-    if (newCfg.channels?.whatsapp?.groups?.[conversationId]) {
-      delete newCfg.channels.whatsapp.groups[conversationId];
+    // Remove from both potential locations: account-scoped (if any) and
+    // top-level channel groups. This covers legacy entries written before
+    // the account-aware fix as well as the current account's allowlist.
+    const wa = newCfg.channels?.whatsapp;
+    if (wa) {
+      const accountKey = findAccountKey(wa.accounts, accountId);
+      if (accountKey && wa.accounts[accountKey]?.groups?.[conversationId]) {
+        delete wa.accounts[accountKey].groups[conversationId];
+      }
+      if (wa.groups?.[conversationId]) {
+        delete wa.groups[conversationId];
+      }
     }
 
     if (newCfg.bindings) {
