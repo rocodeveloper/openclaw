@@ -1186,6 +1186,7 @@ export function createOpenClawCodingTools(options?: {
     ...(turnSourceTo ? { turnSourceTo } : {}),
     ...(options?.agentAccountId ? { turnSourceAccountId: options.agentAccountId } : {}),
     ...(options?.currentThreadTs ? { turnSourceThreadId: options.currentThreadTs } : {}),
+    senderE164: options?.senderE164,
     ...(options?.trace ? { trace: options.trace } : {}),
     loopDetection: resolveToolLoopDetectionConfig({ cfg: options?.config, agentId }),
     onToolOutcome: options?.onToolOutcome,

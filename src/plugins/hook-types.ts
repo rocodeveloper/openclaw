@@ -646,6 +646,7 @@ export type PluginHookToolContext = {
   toolCallId?: string;
   getSessionExtension?: (namespace: string) => PluginJsonValue | undefined;
   channelId?: string;
+  senderE164?: string;
 };
 
 export type PluginHookBeforeToolCallEvent = {

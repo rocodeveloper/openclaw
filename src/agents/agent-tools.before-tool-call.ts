@@ -150,6 +150,7 @@ export type HookContext = {
   turnSourceTo?: string;
   turnSourceAccountId?: string;
   turnSourceThreadId?: string | number;
+  senderE164?: string | null;
   loopDetection?: ToolLoopDetectionConfig;
   onToolOutcome?: ToolOutcomeObserver;
   allocateToolOutcomeOrdinal?: (toolCallId?: string) => number;
@@ -1507,6 +1508,7 @@ export async function runBeforeToolCallHook(args: {
       ...(args.ctx?.trace && { trace: freezeDiagnosticTraceContext(args.ctx.trace) }),
       ...(args.toolCallId && { toolCallId: args.toolCallId }),
       ...(args.ctx?.channelId && { channelId: args.ctx.channelId }),
+      ...(args.ctx?.senderE164 && { senderE164: args.ctx.senderE164 }),
     });
     const toolContext = buildToolContext(toolIdentity);
     const trustedPolicyResult = shouldRunTrustedPolicies
