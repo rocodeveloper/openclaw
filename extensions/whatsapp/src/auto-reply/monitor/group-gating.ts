@@ -155,7 +155,7 @@ export async function applyGroupGating(params: ApplyGroupGatingParams) {
     params.logVerbose(
       `Dropping message from unregistered WhatsApp group ${params.conversationId}. Add the group JID to channels.whatsapp.groups, or add "*" there to admit all groups. Sender authorization still applies.`,
     );
-    return { shouldProcess: false };
+    return { shouldProcess: false, unregistered: true } as const;
   }
 
   noteGroupMember(

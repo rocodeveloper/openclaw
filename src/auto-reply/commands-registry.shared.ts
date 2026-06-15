@@ -169,6 +169,19 @@ export function buildBuiltinChatCommands(
       category: "status",
       tier: "essential",
     }),
+    // Fork: WhatsApp group self-service (handled in whatsapp on-message.ts).
+    defineChatCommand({
+      key: "register",
+      description: "Register this WhatsApp group.",
+      textAlias: "/register",
+      category: "status",
+    }),
+    defineChatCommand({
+      key: "unregister",
+      description: "Unregister this WhatsApp group.",
+      textAlias: "/unregister",
+      category: "status",
+    }),
     defineChatCommand({
       key: "commands",
       nativeName: "commands",
