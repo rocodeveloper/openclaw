@@ -229,7 +229,22 @@ export async function deliverWebReply(params: {
         );
         logVerbose(`Web auto-reply media source: ${mediaUrl} (kind ${media.kind})`);
       }
-      if (media.kind === "image") {
+      if (media.mimetype === "image/webp") {
+        const quote = getQuote();
+        rememberSendResult(
+          await sendWithRetry(
+            () =>
+              msg.platform.sendMedia(
+                {
+                  sticker: media.buffer,
+                  mimetype: "image/webp",
+                },
+                quote,
+              ),
+            "media:sticker",
+          ),
+        );
+      } else if (media.kind === "image") {
         const quote = getQuote();
         rememberSendResult(
           await sendWithRetry(
