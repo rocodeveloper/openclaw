@@ -290,6 +290,11 @@ export function isBillingErrorMessage(raw: string): boolean {
     return false;
   }
 
+  // Fork: catch provider phrasings not covered by the pattern lists below.
+  if (value.includes("monthlylimiterror") || value.includes("spending limit")) {
+    return true;
+  }
+
   if (raw.length > BILLING_ERROR_MAX_LENGTH) {
     return (
       BILLING_ERROR_HARD_402_RE.test(value) ||
