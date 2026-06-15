@@ -610,6 +610,8 @@ export type PluginHookToolContext = {
   toolCallId?: string;
   getSessionExtension?: (namespace: string) => PluginJsonValue | undefined;
   channelId?: string;
+  /** E.164 phone of the sender who triggered this agent turn. */
+  senderE164?: string;
 };
 
 export type PluginHookBeforeToolCallEvent = {

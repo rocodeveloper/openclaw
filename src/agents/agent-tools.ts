@@ -1219,6 +1219,7 @@ export function createOpenClawCodingTools(options?: {
     sessionId: options?.sessionId,
     runId: options?.runId,
     channelId: options?.hookChannelId ?? options?.currentChannelId,
+    senderE164: options?.senderE164,
     ...(options?.trace ? { trace: options.trace } : {}),
     loopDetection: resolveToolLoopDetectionConfig({ cfg: options?.config, agentId }),
     onToolOutcome: options?.onToolOutcome,
