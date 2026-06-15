@@ -125,6 +125,8 @@ export function createWebSendApi(params: {
             caption: resolvedPayloadText.text || undefined,
             mimetype: mediaType,
           };
+        } else if (mediaType === "image/webp") {
+          payload = { sticker: mediaBuffer, mimetype: "image/webp" };
         } else if (mediaType.startsWith("image/")) {
           payload = await addWhatsAppImagePreviewFields({
             image: mediaBuffer,
