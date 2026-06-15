@@ -30,6 +30,11 @@ import { maybeBroadcastMessage } from "./broadcast.js";
 import type { EchoTracker } from "./echo.js";
 import type { GroupHistoryEntry } from "./group-gating.js";
 import { applyGroupGating } from "./group-gating.js";
+import {
+  handleGroupUnregister,
+  handleUnregisteredGroup,
+  isUnregisterCommand,
+} from "./group-auto-register.js";
 import { updateLastRouteInBackground } from "./last-route.js";
 import { resolvePeerId } from "./peer.js";
 import { processMessage } from "./process-message.js";
@@ -379,6 +384,30 @@ export function createWebOnMessageHandler(params: {
       }
       if (!gating.shouldProcess) {
         await clearPreDispatchReaction();
+        if ("unregistered" in gating && gating.unregistered) {
+          await handleUnregisteredGroup({
+            cfg,
+            msg,
+            conversationId,
+            accountId: route.accountId,
+            baseMentionConfig,
+            authDir: account.authDir,
+            logVerbose,
+          });
+        }
+        return;
+      }
+      if (isUnregisterCommand(msg.payload.body)) {
+        await clearPreDispatchReaction();
+        await handleGroupUnregister({
+          cfg,
+          msg,
+          conversationId,
+          accountId: route.accountId,
+          baseMentionConfig,
+          authDir: account.authDir,
+          logVerbose,
+        });
         return;
       }
     }
