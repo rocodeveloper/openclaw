@@ -26,6 +26,7 @@ import { normalizeE164 } from "../../text-runtime.js";
 import { buildMentionConfig } from "../mentions.js";
 import type { MentionConfig } from "../mentions.js";
 import { maybeSendAckReaction } from "./ack-reaction.js";
+import { resolveAudioDeliveryMode } from "./audio-delivery.js";
 import { maybeBroadcastMessage } from "./broadcast.js";
 import type { EchoTracker } from "./echo.js";
 import type { GroupHistoryEntry } from "./group-gating.js";
@@ -301,6 +302,10 @@ export function createWebOnMessageHandler(params: {
           warn: params.replyLogger.warn.bind(params.replyLogger),
         });
         ackAlreadySent = ackReaction !== null;
+      }
+      if (resolveAudioDeliveryMode(cfg) === "native") {
+        preflightAudioTranscript = null;
+        return;
       }
       await transcribeAudioOnce();
     };

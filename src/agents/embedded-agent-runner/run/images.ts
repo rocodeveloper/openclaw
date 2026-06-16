@@ -38,16 +38,31 @@ const IMAGE_EXTENSIONS = new Set<string>();
 for (const ext of IMAGE_EXTENSION_NAMES) {
   IMAGE_EXTENSIONS.add(`.${ext}`);
 }
-const IMAGE_EXTENSION_PATTERN = IMAGE_EXTENSION_NAMES.join("|");
+
+const AUDIO_EXTENSION_NAMES = [
+  "ogg",
+  "mp3",
+  "wav",
+  "m4a",
+  "aac",
+  "flac",
+  "opus",
+] as const;
+const AUDIO_EXTENSIONS = new Set<string>();
+for (const ext of AUDIO_EXTENSION_NAMES) {
+  AUDIO_EXTENSIONS.add(`.${ext}`);
+}
+
+const MEDIA_EXTENSION_PATTERN = [...IMAGE_EXTENSION_NAMES, ...AUDIO_EXTENSION_NAMES].join("|");
 const MEDIA_ATTACHED_PATH_REGEX_SOURCE =
-  "^\\s*(.+?\\.(?:" + IMAGE_EXTENSION_PATTERN + "))\\s*(?:\\(|$|\\|)";
+  "^\\s*(.+?\\.(?:" + MEDIA_EXTENSION_PATTERN + "))\\s*(?:\\(|$|\\|)";
 const MESSAGE_IMAGE_REGEX_SOURCE =
-  "\\[Image:\\s*source:\\s*([^\\]]+\\.(?:" + IMAGE_EXTENSION_PATTERN + "))\\]";
-const FILE_URL_REGEX_SOURCE = "file://[^\\s<>\"'`\\]]+\\.(?:" + IMAGE_EXTENSION_PATTERN + ")";
+  "\\[Image:\\s*source:\\s*([^\\]]+\\.(?:" + MEDIA_EXTENSION_PATTERN + "))\\]";
+const FILE_URL_REGEX_SOURCE = "file://[^\\s<>\"'`\\]]+\\.(?:" + MEDIA_EXTENSION_PATTERN + ")";
 const WINDOWS_DRIVE_PATH_REGEX_SOURCE =
-  "(?:^|\\s|[\"'`(])([A-Za-z]:[\\\\/][^\\s\"'`()\\[\\]]*\\.(?:" + IMAGE_EXTENSION_PATTERN + "))";
+  "(?:^|\\s|[\"'`(])([A-Za-z]:[\\\\/][^\\s\"'`()\\[\\]]*\\.(?:" + MEDIA_EXTENSION_PATTERN + "))";
 const PATH_REGEX_SOURCE =
-  "(?:^|\\s|[\"'`(])((\\.\\.?/|[~/])[^\\s\"'`()\\[\\]]*\\.(?:" + IMAGE_EXTENSION_PATTERN + "))";
+  "(?:^|\\s|[\"'`(])((\\.\\.?/|[~/])[^\\s\"'`()\\[\\]]*\\.(?:" + MEDIA_EXTENSION_PATTERN + "))";
 const MEDIA_ATTACHED_PATTERN = /\[media attached(?:\s+\d+\/\d+)?:\s*([^\]]+)\]/gi;
 const MEDIA_ATTACHED_PATH_PATTERN = new RegExp(MEDIA_ATTACHED_PATH_REGEX_SOURCE, "i");
 const MESSAGE_IMAGE_PATTERN = new RegExp(MESSAGE_IMAGE_REGEX_SOURCE, "gi");
@@ -98,6 +113,11 @@ interface DetectedImageRef {
 function isImageExtension(filePath: string): boolean {
   const ext = normalizeLowercaseStringOrEmpty(path.extname(filePath));
   return IMAGE_EXTENSIONS.has(ext);
+}
+
+function isAudioExtension(filePath: string): boolean {
+  const ext = normalizeLowercaseStringOrEmpty(path.extname(filePath));
+  return AUDIO_EXTENSIONS.has(ext);
 }
 
 function normalizeRefForDedupe(raw: string): string {
@@ -303,20 +323,51 @@ export function splitPromptAndAttachmentRefs(params: {
   return { promptRefs, attachmentRefs };
 }
 
+function isAudioContentBlock(block: ImageContent): boolean {
+  return normalizeLowercaseStringOrEmpty(block.mimeType).startsWith("audio/");
+}
+
 async function sanitizeImagesWithLog(
   images: ImageContent[],
   label: string,
   imageSanitization?: ImageSanitizationLimits,
 ): Promise<ImageContent[]> {
+  // Keep audio outside image sanitization because the image decoder cannot read audio bytes.
+  const audioByIndex = new Map<number, ImageContent>();
+  const imageBlocks: ImageContent[] = [];
+  for (let i = 0; i < images.length; i++) {
+    const block = images[i];
+    if (isAudioContentBlock(block)) {
+      audioByIndex.set(i, block);
+    } else {
+      imageBlocks.push(block);
+    }
+  }
+
   const { images: sanitized, dropped } = await sanitizeImageBlocks(
-    images,
+    imageBlocks,
     label,
     imageSanitization,
   );
   if (dropped > 0) {
     log.warn(`Native image: dropped ${dropped} image(s) after sanitization (${label}).`);
   }
-  return sanitized;
+
+  if (audioByIndex.size === 0) {
+    return sanitized;
+  }
+
+  const out: ImageContent[] = [];
+  let sanitizedIdx = 0;
+  for (let i = 0; i < images.length; i++) {
+    const audio = audioByIndex.get(i);
+    if (audio) {
+      out.push(audio);
+    } else if (sanitizedIdx < sanitized.length) {
+      out.push(sanitized[sanitizedIdx++]);
+    }
+  }
+  return out;
 }
 
 /**
@@ -333,7 +384,11 @@ async function sanitizeImagesWithLog(
  * @param prompt The user prompt text to scan
  * @returns Array of detected image references
  */
-export function detectImageReferences(prompt: string): DetectedImageRef[] {
+export function detectImageReferences(
+  prompt: string,
+  opts?: { includeAudio?: boolean },
+): DetectedImageRef[] {
+  const includeAudio = opts?.includeAudio ?? false;
   const refs: DetectedImageRef[] = [];
   const seen = new Set<string>();
 
@@ -347,7 +402,7 @@ export function detectImageReferences(prompt: string): DetectedImageRef[] {
     if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
       return;
     }
-    if (!isImageExtension(trimmed)) {
+    if (!isImageExtension(trimmed) && !(includeAudio && isAudioExtension(trimmed))) {
       return;
     }
     try {
@@ -419,6 +474,9 @@ export function detectImageReferences(prompt: string): DetectedImageRef[] {
     const raw = match[0];
     const dedupeKey = normalizeRefForDedupe(raw);
     if (seen.has(dedupeKey)) {
+      continue;
+    }
+    if (!isImageExtension(raw) && !(includeAudio && isAudioExtension(raw))) {
       continue;
     }
     // Use fileURLToPath for proper handling (e.g., file://localhost/path)
@@ -518,14 +576,13 @@ export async function loadImageFromRef(
             : options?.maxBytes,
         );
 
-    if (media.kind !== "image") {
-      log.debug(`Native image: not an image file: ${targetPath} (got ${media.kind})`);
+    if (media.kind !== "image" && media.kind !== "audio") {
+      log.debug(`Native image: not an image or audio file: ${targetPath} (got ${media.kind})`);
       return null;
     }
 
-    // EXIF orientation is already normalized by loadWebMedia -> resizeToJpeg
-    // Default to JPEG since optimization converts images to JPEG format
-    const mimeType = media.contentType ?? "image/jpeg";
+    const mimeType =
+      media.contentType ?? (media.kind === "audio" ? "audio/ogg" : "image/jpeg");
     const data = media.buffer.toString("base64");
 
     return { type: "image", data, mimeType };
@@ -539,6 +596,10 @@ export async function loadImageFromRef(
 /** Returns whether the resolved model advertises native image input support. */
 export function modelSupportsImages(model: { input?: string[] }): boolean {
   return model.input?.includes("image") ?? false;
+}
+
+export function modelSupportsAudio(model: { input?: string[] }): boolean {
+  return model.input?.includes("audio") ?? false;
 }
 
 /**
@@ -564,7 +625,9 @@ export async function detectAndLoadPromptImages(params: {
   loadedCount: number;
   skippedCount: number;
 }> {
-  if (!modelSupportsImages(params.model)) {
+  const supportsImages = modelSupportsImages(params.model);
+  const supportsAudio = modelSupportsAudio(params.model);
+  if (!supportsImages && !supportsAudio) {
     return {
       images: [],
       detectedRefs: [],
@@ -573,7 +636,7 @@ export async function detectAndLoadPromptImages(params: {
     };
   }
 
-  const allRefs = detectImageReferences(params.prompt);
+  const allRefs = detectImageReferences(params.prompt, { includeAudio: supportsAudio });
 
   if (allRefs.length === 0) {
     const sanitizedExistingImages = await sanitizeImagesWithLog(

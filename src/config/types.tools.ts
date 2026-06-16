@@ -91,6 +91,7 @@ export type MediaUnderstandingModelConfig = MediaProviderRequestConfig & {
 export type MediaUnderstandingConfig = MediaProviderRequestConfig & {
   /** Enable media understanding when models are configured. */
   enabled?: boolean;
+  delivery?: "auto" | "native" | "transcript";
   /** Optional scope gating for understanding. */
   scope?: MediaUnderstandingScopeConfig;
   /** Default max bytes to send. */
