@@ -91,6 +91,15 @@ export type MediaUnderstandingModelConfig = MediaProviderRequestConfig & {
 export type MediaUnderstandingConfig = MediaProviderRequestConfig & {
   /** Enable media understanding when models are configured. */
   enabled?: boolean;
+  /**
+   * Audio-only: how inbound voice notes are delivered to the agent.
+   * - "transcript": preflight transcribes the audio; no native audio is attached.
+   * - "native": attach the raw audio to audio-capable models and SKIP the preflight transcription.
+   * - "auto" (default when unset): attach native audio when the model supports audio (e.g. Gemini)
+   *   AND keep the preflight transcription as a safe fallback for non-audio models.
+   * Only meaningful under `tools.media.audio`.
+   */
+  delivery?: "auto" | "native" | "transcript";
   /** Optional scope gating for understanding. */
   scope?: MediaUnderstandingScopeConfig;
   /** Default max bytes to send. */

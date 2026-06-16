@@ -23,6 +23,7 @@ import { normalizeE164 } from "../../text-runtime.js";
 import { buildMentionConfig } from "../mentions.js";
 import type { MentionConfig } from "../mentions.js";
 import { maybeSendAckReaction } from "./ack-reaction.js";
+import { resolveAudioDeliveryMode } from "./audio-delivery.js";
 import { maybeBroadcastMessage } from "./broadcast.js";
 import type { EchoTracker } from "./echo.js";
 import type { GroupHistoryEntry } from "./group-gating.js";
@@ -257,6 +258,16 @@ export function createWebOnMessageHandler(params: {
           warn: params.replyLogger.warn.bind(params.replyLogger),
         });
         ackAlreadySent = ackReaction !== null;
+      }
+      // Native audio delivery: the raw voice note is attached to audio-capable
+      // models downstream (see process-message.ts), so skip the STT preflight
+      // entirely. Mark the transcript as null (attempted, no transcript) so
+      // per-agent retries are suppressed and processMessage does not transcribe.
+      // "auto" and "transcript" keep transcription (auto = native + transcript
+      // fallback for non-audio models).
+      if (resolveAudioDeliveryMode(cfg) === "native") {
+        preflightAudioTranscript = null;
+        return;
       }
       try {
         const { transcribeFirstAudio } = await import("./audio-preflight.runtime.js");

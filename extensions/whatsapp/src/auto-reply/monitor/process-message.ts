@@ -72,6 +72,7 @@ import {
   createWhatsAppStatusReactionController,
   type StatusReactionController,
 } from "./status-reaction.js";
+import { resolveAudioDeliveryMode, shouldAttachNativeAudio } from "./audio-delivery.js";
 
 const WHATSAPP_MESSAGE_RECEIVED_HOOK_LIMITS = {
   maxConcurrency: 8,
@@ -343,6 +344,22 @@ export async function processMessage(params: {
       });
     }
     shouldClearGroupHistory = !(params.suppressGroupHistoryClear ?? false);
+  }
+
+  // Native audio delivery: when configured for "native"/"auto" and the inbound
+  // message carries a voice note, append the local audio file path to the body
+  // so the model-gated prompt-image loader (detectAndLoadPromptImages, gated by
+  // modelSupportsAudio) inlines it as native base64 audio for audio-capable
+  // models. Non-audio models ignore the path and rely on the transcript instead.
+  const audioMediaPath = params.msg.payload.media?.path;
+  const hasAudioAttachment =
+    params.msg.payload.media?.type?.startsWith("audio/") === true && Boolean(audioMediaPath);
+  if (
+    hasAudioAttachment &&
+    audioMediaPath &&
+    shouldAttachNativeAudio(resolveAudioDeliveryMode(params.cfg))
+  ) {
+    combinedBody = `${combinedBody}\n${audioMediaPath}`;
   }
 
   // Echo detection uses combined body so we don't respond twice.
