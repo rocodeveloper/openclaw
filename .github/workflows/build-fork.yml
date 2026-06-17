@@ -2,7 +2,7 @@ name: Build Fork
 
 on:
   push:
-    branches: [rocobot-v2026.6]
+    branches: [rocobot-v2026.6, pristine-v2026.6]
   workflow_dispatch:
 
 jobs:
