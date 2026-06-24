@@ -187,17 +187,49 @@ function shouldSkipMentionAt(
   return Boolean((previous && /[\w@]/.test(previous)) || (next && /[\w@]/.test(next)));
 }
 
+// Direct @<digits> -> <digits>@s.whatsapp.net mapping for chats where a
+// participant list isn't available for lookup: 1:1 DMs, "self" groups, and the
+// fast-send reminder path (which sends without loading group metadata). WhatsApp
+// only renders a mention as @Name for @s.whatsapp.net JIDs — never @lid — so we
+// always emit the phone JID here. Restores fork commits 3dbdb85a65 + 7f5a384ae5,
+// which were dropped in the v2026.6 rebuild because upstream's participant-based
+// resolver (above) superseded the group case but left DM/no-participant sends
+// (e.g. owner reminders) without a rendered @tag.
+function resolveOutboundMentionsByDirectMapping(
+  text: string,
+): WhatsAppOutboundMentionResolution {
+  const codeRanges = collectCodeRanges(text);
+  const mentionedJids: string[] = [];
+  const seen = new Set<string>();
+  for (const match of text.matchAll(OUTBOUND_MENTION_RE)) {
+    const token = match[0];
+    const start = match.index;
+    if (shouldSkipMentionAt(text, start, start + token.length, codeRanges)) {
+      continue;
+    }
+    const digits = match[1].replace(/\D/g, "");
+    if (digits.length < 10) {
+      continue;
+    }
+    const jid = `${digits}@s.whatsapp.net`;
+    if (!seen.has(jid)) {
+      seen.add(jid);
+      mentionedJids.push(jid);
+    }
+  }
+  return { text, mentionedJids };
+}
+
 export function resolveWhatsAppOutboundMentions(params: {
   chatJid: string;
   text: string;
   participants?: readonly WhatsAppOutboundMentionParticipant[];
 }): WhatsAppOutboundMentionResolution {
-  if (
-    !isWhatsAppGroupJid(params.chatJid) ||
-    !mayContainWhatsAppOutboundMention(params.text) ||
-    !params.participants?.length
-  ) {
+  if (!mayContainWhatsAppOutboundMention(params.text)) {
     return { text: params.text, mentionedJids: [] };
+  }
+  if (!isWhatsAppGroupJid(params.chatJid) || !params.participants?.length) {
+    return resolveOutboundMentionsByDirectMapping(params.text);
   }
 
   const { byPhone, byLid } = buildMentionTargetMaps(params.participants);

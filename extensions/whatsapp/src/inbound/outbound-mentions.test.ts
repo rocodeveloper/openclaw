@@ -128,14 +128,32 @@ describe("resolveWhatsAppOutboundMentions", () => {
     });
   });
 
-  it("does not add mention metadata for direct chats or unmatched group participants", () => {
+  it("direct-maps mentions for DMs and groups without a usable participant list", () => {
+    // DM: no group participant lookup, so map @<digits> straight to the phone JID
+    // (this is how owner reminders render @Name — fork commits 3dbdb85a65/7f5a384ae5).
     expect(
       resolveWhatsAppOutboundMentions({
         chatJid: "15551234567@s.whatsapp.net",
         text: "hi @+15551234567",
         participants: [{ id: "15551234567@s.whatsapp.net" }],
       }),
-    ).toEqual({ text: "hi @+15551234567", mentionedJids: [] });
+    ).toEqual({
+      text: "hi @+15551234567",
+      mentionedJids: ["15551234567@s.whatsapp.net"],
+    });
+    // Group send with no participant list loaded (e.g. the fast-send reminder path).
+    expect(
+      resolveWhatsAppOutboundMentions({
+        chatJid: "40723572512-1515751976@g.us",
+        text: "Reminder @40723572512: do the thing",
+      }),
+    ).toEqual({
+      text: "Reminder @40723572512: do the thing",
+      mentionedJids: ["40723572512@s.whatsapp.net"],
+    });
+  });
+
+  it("does not add mention metadata for unmatched group participants", () => {
     expect(
       resolveWhatsAppOutboundMentions({
         chatJid: "120363000000000000@g.us",
