@@ -191,6 +191,14 @@ const ERROR_PATTERNS = {
     /used\s+all\s+available\s+credits/i,
     /(?:monthly\s+)?spend(?:ing)?\s+limit/i,
     /insufficient[_ ]quota/i,
+    // Google/OpenAI quota-exhaustion errors say "check your plan and billing
+    // details" — a billing/credit bill-out, not a transient limit. Transient
+    // per-minute 429s ("Resource has been exhausted", "...per minute") lack this
+    // phrase, so they stay classified rateLimit (retryable). Without this, Google
+    // bill-outs arrive as HTTP 429 "exceeded your current quota, please check your
+    // plan and billing details" and were mis-classified rateLimit, so the funny
+    // billing copy never fired and the user saw a raw provider error.
+    /plan and billing/i,
     "credit balance",
     "plans & billing",
     /insufficient[_ ]balance/i,
