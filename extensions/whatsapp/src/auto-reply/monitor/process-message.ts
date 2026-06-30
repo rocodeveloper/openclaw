@@ -35,6 +35,7 @@ import {
 } from "../../system-prompt.js";
 import { deliverWebReply } from "../deliver-reply.js";
 import { whatsappInboundLog } from "../loggers.js";
+import { buildMentionConfig } from "../mentions.js";
 import { elide } from "../util.js";
 import { maybeSendAckReaction } from "./ack-reaction.js";
 import {
@@ -42,6 +43,7 @@ import {
   resolveVisibleWhatsAppReplyContext,
   type GroupHistoryEntry,
 } from "./inbound-context.js";
+import { stripMentionsForCommand } from "./commands.js";
 import {
   buildWhatsAppInboundContext,
   dispatchWhatsAppBufferedReply,
@@ -435,12 +437,24 @@ export async function processMessage(params: {
   }
 
   const sender = getSenderIdentity(params.msg);
-  const commandBody = params.msg.payload.commandBody ?? params.msg.payload.body;
+  const rawCommandBody = params.msg.payload.commandBody ?? params.msg.payload.body;
   const dmRouteTarget = resolveWhatsAppDmRouteTarget({
     msg: params.msg,
     senderE164: sender.e164 ?? undefined,
     normalizeE164,
   });
+  const commandBody =
+    params.msg.chatType === "group"
+      ? stripMentionsForCommand(
+          rawCommandBody,
+          buildMentionConfig(params.cfg, params.route.agentId, {
+            provider: "whatsapp",
+            conversationId,
+            providerPolicy: account.mentionPatterns,
+          }).mentionRegexes,
+          self.e164,
+        )
+      : rawCommandBody;
   const shouldCheckCommandAuth = shouldComputeCommandAuthorized(commandBody, params.cfg);
   const isTextCommand = isControlCommandMessage(commandBody, params.cfg);
   const commandAuthorized = shouldCheckCommandAuth

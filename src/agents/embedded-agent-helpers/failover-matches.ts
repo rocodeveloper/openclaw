@@ -204,9 +204,9 @@ const ERROR_PATTERNS = {
     /used\s+all\s+available\s+credits/i,
     /(?:monthly\s+)?spend(?:ing)?\s+limit/i,
     /insufficient[_ ]quota/i,
+    /plan and billing/i,
     "credit balance",
     "plans & billing",
-    "plan and billing",
     "monthlylimiterror",
     /insufficient[_ ]balance/i,
     // Fuzzy: "Insufficient MBT balance", "Insufficient token balance", etc.

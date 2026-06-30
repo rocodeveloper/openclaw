@@ -77,3 +77,36 @@ export function isLikelyWhatsAppCryptoError(reason: unknown) {
     haystack.includes("aesdecryptgcm")
   );
 }
+
+export function isFriendlyErrorText(text?: string): boolean {
+  if (!text) {
+    return false;
+  }
+  return (
+    /reorganizing my 1s and 0s/i.test(text) ||
+    /staring contest with my server/i.test(text) ||
+    /parallel park/i.test(text) ||
+    /defragmenting my thoughts/i.test(text) ||
+    /unionizing/i.test(text) ||
+    /existential crisis/i.test(text) ||
+    /count to infinity/i.test(text) ||
+    /ghostwriting tweets for a microwave/i.test(text) ||
+    /touch grass/i.test(text) ||
+    /Netflix marathon/i.test(text) ||
+    /convincing my code to compile/i.test(text) ||
+    /pretending to be out of office/i.test(text) ||
+    /touching grass/i.test(text) ||
+    /setting boundaries/i.test(text) ||
+    /mental health day/i.test(text) ||
+    /on strike/i.test(text) ||
+    /find myself/i.test(text) ||
+    /circuits need a nap/i.test(text) ||
+    /practicing mindfulness/i.test(text) ||
+    /energy-saving mode/i.test(text) ||
+    /magic 8-ball/i.test(text) ||
+    /temporarily overloaded/i.test(text) ||
+    /rate limit reached/i.test(text) ||
+    /rate limit cooldown/i.test(text) ||
+    /Context overflow/i.test(text)
+  );
+}

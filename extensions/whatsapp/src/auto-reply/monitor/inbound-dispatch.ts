@@ -21,7 +21,7 @@ import {
   normalizeWhatsAppPayloadTextPreservingIndentation,
 } from "../../outbound-media-contract.js";
 import type { WhatsAppReplyDeliveryResult } from "../deliver-reply.js";
-import { markWhatsAppVisibleDeliveryError } from "../util.js";
+import { markWhatsAppVisibleDeliveryError, isFriendlyErrorText } from "../util.js";
 import { formatGroupMembers } from "./group-members.js";
 import type { GroupHistoryEntry } from "./inbound-context.js";
 import {
@@ -183,6 +183,9 @@ function resolveWhatsAppDeliverablePayload(
     return null;
   }
   if (payload.isError === true) {
+    if (isFriendlyErrorText(payload.text)) {
+      return payload;
+    }
     return null;
   }
   if (info.kind === "tool") {

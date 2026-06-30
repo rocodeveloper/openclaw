@@ -20,6 +20,7 @@ import {
 import { WHATSAPP_LEGACY_OUTBOUND_SEND_DEP_KEYS } from "./outbound-send-deps.js";
 import { lookupInboundMessageMetaForTarget } from "./quoted-message.js";
 import { toWhatsappJid } from "./text-runtime.js";
+import { isFriendlyErrorText } from "./auto-reply/util.js";
 
 type WhatsAppChunker = NonNullable<ChannelOutboundAdapter["chunker"]>;
 type WhatsAppSendTextOptions = {
@@ -261,7 +262,7 @@ export function createWhatsAppOutboundBase({
   return {
     ...outbound,
     sendPayload: async (ctx) => {
-      if (ctx.payload.isError === true) {
+      if (ctx.payload.isError === true && !isFriendlyErrorText(ctx.payload.text)) {
         return { channel: "whatsapp", messageId: "" };
       }
       const payload = normalizeWhatsAppOutboundPayload(ctx.payload, { normalizeText });

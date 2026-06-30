@@ -350,6 +350,41 @@ describe("processMessage group system prompt wiring", () => {
     });
   });
 
+  it("strips leading bot mentions before detecting group slash commands", async () => {
+    resolvePolicyMock.mockReturnValue(makePolicy(makeAccount()));
+    isControlCommandMessageMock.mockReturnValue(true);
+    shouldComputeCommandAuthorizedMock.mockReturnValue(true);
+
+    await callProcessMessage({
+      cfg: {
+        messages: {
+          groupChat: {
+            mentionPatterns: ["@manu"],
+          },
+        },
+      },
+      msg: makeBaseMsg({ body: "@manu /model" }),
+    });
+
+    expect(shouldComputeCommandAuthorizedMock).toHaveBeenCalledWith("/model", {
+      messages: { groupChat: { mentionPatterns: ["@manu"] } },
+    });
+    expect(isControlCommandMessageMock).toHaveBeenCalledWith("/model", {
+      messages: { groupChat: { mentionPatterns: ["@manu"] } },
+    });
+    expect(buildContextMock.mock.calls[0][0]).toMatchObject({
+      commandBody: "/model",
+      commandAuthorized: true,
+      commandTurn: {
+        kind: "text-slash",
+        source: "text",
+        authorized: true,
+        body: "/model",
+      },
+      rawBody: "@manu /model",
+    });
+  });
+
   it("checks auth for inline command tokens without marking them as command-source turns", async () => {
     resolvePolicyMock.mockReturnValue(makePolicy(makeAccount()));
     isControlCommandMessageMock.mockReturnValue(false);

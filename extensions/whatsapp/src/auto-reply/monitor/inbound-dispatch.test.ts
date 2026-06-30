@@ -1108,6 +1108,36 @@ describe("whatsapp inbound dispatch", () => {
     expect(rememberSentText).not.toHaveBeenCalled();
   });
 
+  it("does not suppress friendly user-facing error payload text", async () => {
+    const deliverReply = vi.fn(async () => acceptedDeliveryResult());
+    const rememberSentText = vi.fn();
+
+    await dispatchBufferedReply({ deliverReply, rememberSentText });
+
+    const deliver = getCapturedDeliver();
+    expect(deliver).toBeTypeOf("function");
+
+    await deliver?.({ text: "The AI service is temporarily overloaded. Please try again in a moment.", isError: true }, { kind: "final" });
+
+    expect(deliverReply).toHaveBeenCalled();
+    expect(rememberSentText).toHaveBeenCalled();
+  });
+
+  it("does not suppress billing busy error payload text", async () => {
+    const deliverReply = vi.fn(async () => acceptedDeliveryResult());
+    const rememberSentText = vi.fn();
+
+    await dispatchBufferedReply({ deliverReply, rememberSentText });
+
+    const deliver = getCapturedDeliver();
+    expect(deliver).toBeTypeOf("function");
+
+    await deliver?.({ text: "Can't talk right now, I'm busy reorganizing my 1s and 0s.", isError: true }, { kind: "final" });
+
+    expect(deliverReply).toHaveBeenCalled();
+    expect(rememberSentText).toHaveBeenCalled();
+  });
+
   it("maps WhatsApp blockStreaming=true to disableBlockStreaming=false", async () => {
     await dispatchBufferedReply();
 

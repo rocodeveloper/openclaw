@@ -201,6 +201,21 @@ describe("whatsappOutbound sendPayload", () => {
     expect(sendWhatsApp).not.toHaveBeenCalled();
   });
 
+  it("does not suppress friendly user-facing error payloads", async () => {
+    const sendWhatsApp = vi.fn();
+
+    const result = await whatsappOutbound.sendPayload!({
+      cfg: {},
+      to: "5511999999999@c.us",
+      text: "",
+      payload: { text: "The AI service is temporarily overloaded. Please try again in a moment.", isError: true },
+      deps: { sendWhatsApp },
+    });
+
+    expect(result).not.toEqual({ channel: "whatsapp", messageId: "" });
+    expect(sendWhatsApp).toHaveBeenCalled();
+  });
+
   it("sanitizes HTML-only text to whitespace-only payload", () => {
     expect(
       whatsappOutbound

@@ -223,6 +223,27 @@ describe("isBillingErrorMessage", () => {
     expect(isBillingErrorMessage(msg)).toBe(true);
     expect(classifyFailoverReason(msg)).toBe("billing");
   });
+  it("matches Google/OpenAI quota bill-outs ('check your plan and billing details')", () => {
+    const google =
+      "Google Generative AI API error (429): You exceeded your current quota, " +
+      "please check your plan and billing details.";
+    expect(isBillingErrorMessage(google)).toBe(true);
+    const openai =
+      "429 You exceeded your current quota, please check your plan and billing details.";
+    expect(isBillingErrorMessage(openai)).toBe(true);
+  });
+  it("does not treat transient per-minute resource-exhausted 429s as billing", () => {
+    expect(
+      isBillingErrorMessage(
+        "429 RESOURCE_EXHAUSTED: Resource has been exhausted (e.g. check quota).",
+      ),
+    ).toBe(false);
+    expect(
+      isBillingErrorMessage(
+        "Quota exceeded for quota metric 'GenerateContent requests per minute'.",
+      ),
+    ).toBe(false);
+  });
   it("matches provider spending-limit exhaustion messages", () => {
     // Provider wording often omits HTTP 402 while still describing a billing
     // exhaustion state that should route to billing copy/failover.
