@@ -127,18 +127,18 @@ function participantValues(participant: WhatsAppOutboundMentionParticipant): {
   return typeof participant === "string" ? { id: participant } : participant;
 }
 
+// A @lid mention makes WhatsApp Desktop render the whole message blank (mobile and web are fine), and
+// picking a LID here also rewrites the visible text to the raw LID digits. Prefer a phone JID; fall back
+// to a LID only when no phone number is known. Keep the LID branch: WhatsApp is migrating to LID
+// addressing, so this preference has to flip back once phone-JID mentions stop being accepted.
 function chooseMentionJid(participant: WhatsAppOutboundMentionParticipant): string | null {
   const values = participantValues(participant);
   const idJid = normalizeKnownUserJid(values.id ?? "");
   const lidJid = normalizeKnownUserJid(values.lid ?? "");
-  return (
-    (idJid && isLidJid(idJid) ? idJid : null) ??
-    (lidJid && isLidJid(lidJid) ? lidJid : null) ??
-    idJid ??
-    lidJid ??
-    normalizeKnownUserJid(values.phoneNumber ?? "") ??
-    normalizeKnownUserJid(values.e164 ?? "")
-  );
+  const phoneJid =
+    normalizeKnownUserJid(values.phoneNumber ?? "") ?? normalizeKnownUserJid(values.e164 ?? "");
+  const candidates = [idJid, lidJid, phoneJid];
+  return candidates.find((jid) => jid && !isLidJid(jid)) ?? candidates.find(Boolean) ?? null;
 }
 
 function buildMentionTargetMaps(participants: readonly WhatsAppOutboundMentionParticipant[]): {
