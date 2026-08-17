@@ -234,6 +234,43 @@ describe("before_tool_call terminal block semantics", () => {
 });
 
 describe("message_sending terminal cancel semantics", () => {
+  it("fails open when a handler exceeds the default outbound timeout", async () => {
+    vi.useFakeTimers();
+    try {
+      addStaticTestHooks(registry, {
+        hookName: "message_sending",
+        hooks: [
+          {
+            pluginId: "stuck-plugin",
+            result: {},
+            handler: () => new Promise<PluginHookMessageSendingResult>(() => {}),
+          },
+          {
+            pluginId: "healthy-plugin",
+            result: { content: "delivered" },
+          },
+        ],
+      });
+      const logger = {
+        error: vi.fn(),
+        warn: vi.fn(),
+        info: vi.fn(),
+        debug: vi.fn(),
+      };
+      const runner = createHookRunner(registry, { logger });
+
+      const resultPromise = runner.runMessageSending(messageEvent, messageCtx);
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      await expect(resultPromise).resolves.toMatchObject({ content: "delivered" });
+      expect(logger.error).toHaveBeenCalledWith(
+        "[hooks] message_sending handler from stuck-plugin failed: timed out after 5000ms",
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   let registry: PluginRegistry;
 
   beforeEach(() => {
