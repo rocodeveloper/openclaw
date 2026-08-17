@@ -792,7 +792,7 @@ export async function attachWebInboxToSocket(
       if (currentSock) {
         try {
           await assertCanSendToJid(jid, currentSock, { useVerifiedReady: true });
-          const result = await createWhatsAppSocketOperationTimeoutAdapter(
+          const sendPromise = createWhatsAppSocketOperationTimeoutAdapter(
             currentSock,
             sendOperationTimeoutMs,
             {
@@ -801,6 +801,25 @@ export async function attachWebInboxToSocket(
               },
             },
           ).sendMessage(jid, content, sendOptions);
+          let closedDuringSend = false;
+          // Race the original socket close because Baileys can leave sendMessage pending after disconnect.
+          const result = await (currentSock === sock
+            ? Promise.race([
+                sendPromise,
+                onClose.then((reason): never => {
+                  closedDuringSend = true;
+                  const status = reason.status === undefined ? "" : ` (status ${reason.status})`;
+                  throw new Error(
+                    `WhatsApp socket closed during send${status}: ${formatError(reason.error)}`,
+                  );
+                }),
+              ]).catch((error: unknown) => {
+                if (closedDuringSend) {
+                  trackLateAcceptedSend(jid, sendPromise);
+                }
+                throw error;
+              })
+            : sendPromise);
           rememberOutboundMessage(jid, result);
           return result;
         } catch (err) {
