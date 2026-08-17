@@ -230,6 +230,10 @@ const DEFAULT_MODIFYING_HOOK_TIMEOUT_MS_BY_HOOK: Partial<Record<PluginHookName, 
   before_agent_start: 15_000,
   before_prompt_build: 15_000,
   resolve_exec_env: 15_000,
+  // Outbound hooks run on the serialized reply delivery chain. Keep them
+  // bounded so one unresponsive plugin cannot wedge every later message.
+  message_sending: 5_000,
+  reply_payload_sending: 5_000,
 };
 
 type ModifyingHookPolicy<K extends PluginHookName, TResult> = {

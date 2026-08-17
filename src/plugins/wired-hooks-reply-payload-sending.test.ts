@@ -29,6 +29,46 @@ function firstErrorLog(logger: { error: ReturnType<typeof vi.fn> }) {
 }
 
 describe("reply_payload_sending hook runner", () => {
+  it("fails open when a handler exceeds the default outbound timeout", async () => {
+    vi.useFakeTimers();
+    try {
+      const logger = {
+        error: vi.fn(),
+        warn: vi.fn(),
+        info: vi.fn(),
+        debug: vi.fn(),
+      };
+      const { runner } = createHookRunnerWithRegistry(
+        [
+          {
+            hookName: "reply_payload_sending",
+            pluginId: "stuck-plugin",
+            handler: () => new Promise(() => {}),
+          },
+          {
+            hookName: "reply_payload_sending",
+            pluginId: "healthy-plugin",
+            handler: () => ({ payload: { text: "delivered" } }),
+          },
+        ],
+        { logger },
+      );
+
+      const resultPromise = runner.runReplyPayloadSending(
+        replyPayloadSendingEvent,
+        replyPayloadSendingCtx,
+      );
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      await expect(resultPromise).resolves.toMatchObject({ payload: { text: "delivered" } });
+      expect(logger.error).toHaveBeenCalledWith(
+        "[hooks] reply_payload_sending handler from stuck-plugin failed: timed out after 5000ms",
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("passes the latest payload between handlers", async () => {
     const first = vi.fn().mockResolvedValue({
       payload: {
