@@ -668,6 +668,48 @@ describe("web monitor inbox", () => {
     await listener.close();
   });
 
+  it("retries on the replacement socket when the active socket closes during send", async () => {
+    const onMessage = vi.fn(async () => undefined);
+    const socketRef = createSocketRef();
+    const { listener, sock, inbound } = await primeInboundReplyHandle({
+      onMessage,
+      socketRef,
+      upsertId: "disconnect-during-send",
+      retryPolicy: fastReconnectPolicy(2),
+    });
+    vi.useFakeTimers();
+    try {
+      const replacementSock = {
+        sendMessage: vi.fn(async () => ({ key: { id: "after-reconnect" } })),
+        sendPresenceUpdate: vi.fn(async () => undefined),
+      };
+      sock.sendMessage.mockImplementationOnce(() => new Promise(() => {}));
+      sleepWithAbortMock.mockImplementationOnce(async () => {
+        socketRef.current = replacementSock as unknown as NonNullable<
+          InboxMonitorOptions["socketRef"]
+        >["current"];
+      });
+
+      const replyPromise = inbound.platform.reply("pong");
+      await Promise.resolve();
+      expect(sock.sendMessage).toHaveBeenCalledTimes(1);
+      sock.ev.emit("connection.update", {
+        connection: "close",
+        lastDisconnect: { error: { output: { statusCode: 408 } } },
+      });
+      await vi.advanceTimersByTimeAsync(DEFAULT_WHATSAPP_SOCKET_TIMING.defaultQueryTimeoutMs);
+
+      await expect(replyPromise).resolves.toBeDefined();
+      expect(replacementSock.sendMessage).toHaveBeenCalledWith("999@s.whatsapp.net", {
+        text: "pong",
+      });
+      expect(sleepWithAbortMock).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+      await listener.close();
+    }
+  });
+
   it("flushes pending debounced inbound batches after close", async () => {
     vi.useFakeTimers();
     try {
