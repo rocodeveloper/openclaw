@@ -148,6 +148,33 @@ describe("AcpxRuntime fresh reset wrapper", () => {
     vi.restoreAllMocks();
   });
 
+  it("advertises native audio from the resolved ACP agent command", async () => {
+    const baseStore: TestSessionStore = {
+      load: vi.fn(async (sessionId) => ({
+        agentCommand: sessionId.includes("codex")
+          ? CODEX_ACP_WRAPPER_COMMAND
+          : "npx @agentclientprotocol/claude-agent-acp",
+      })),
+      save: vi.fn(async () => {}),
+    };
+    const { runtime } = makeRuntime(baseStore);
+    const createHandle = (agent: string) => ({
+      sessionKey: `agent:${agent}:acp:test`,
+      backend: "acpx",
+      runtimeSessionName: agent,
+      acpxRecordId: `agent:${agent}:acp:test`,
+    });
+
+    await expect(runtime.getCapabilities({ handle: createHandle("codex") })).resolves.toMatchObject(
+      {
+        input: ["audio"],
+      },
+    );
+    await expect(
+      runtime.getCapabilities({ handle: createHandle("claude") }),
+    ).resolves.not.toHaveProperty("input");
+  });
+
   it("rejects unsupported runtime session modes with a clear AcpRuntimeError (issue #73071)", async () => {
     const baseStore: TestSessionStore = {
       load: vi.fn(async () => undefined),

@@ -386,6 +386,31 @@ describe("AcpSessionManager runtime config", () => {
     expect(status.identity?.agentSessionId).toBe("agent-stable");
   });
 
+  it("preserves runtime input capabilities in ACP session status", async () => {
+    const runtimeState = createRuntime();
+    runtimeState.getCapabilities.mockResolvedValue({
+      controls: ["session/status"],
+      input: ["audio"],
+    });
+    hoisted.requireAcpRuntimeBackendMock.mockReturnValue({
+      id: "acpx",
+      runtime: runtimeState.runtime,
+    });
+    hoisted.readAcpSessionEntryMock.mockReturnValue({
+      sessionKey: "agent:codex:acp:session-1",
+      storeSessionKey: "agent:codex:acp:session-1",
+      acp: readySessionMeta(),
+    });
+
+    const manager = new AcpSessionManager();
+    const status = await manager.getSessionStatus({
+      cfg: baseCfg,
+      sessionKey: "agent:codex:acp:session-1",
+    });
+
+    expect(status.capabilities.input).toEqual(["audio"]);
+  });
+
   it("applies persisted runtime options before running turns", async () => {
     const runtimeState = createRuntime();
     hoisted.requireAcpRuntimeBackendMock.mockReturnValue({

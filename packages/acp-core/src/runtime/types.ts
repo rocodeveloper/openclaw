@@ -65,6 +65,7 @@ export type AcpRuntimeTurnInput = {
 
 export type AcpRuntimeCapabilities = {
   controls: AcpRuntimeControl[];
+  input?: Array<"audio">;
   /**
    * Optional backend-advertised option keys for session/set_config_option.
    * Empty/undefined means "backend accepts keys, but did not advertise a strict list".

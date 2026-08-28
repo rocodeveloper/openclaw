@@ -67,6 +67,7 @@ import {
   shouldComputeCommandAuthorized,
   shouldLogVerbose,
   type getChildLogger,
+  type GetReplyOptions,
   type getReplyFromConfig,
   type HistoryEntry,
   type LoadConfigFn,
@@ -346,7 +347,7 @@ export async function processMessage(params: {
     }
     return body;
   };
-  let combinedBody = buildCombinedBody(msgForAgent);
+  const combinedBody = buildCombinedBody(msgForAgent);
   const nativeCombinedBody = buildCombinedBody(params.msg);
   let shouldClearGroupHistory = false;
 
@@ -436,7 +437,7 @@ export async function processMessage(params: {
     normalizeE164,
   });
   const commandBody =
-    params.msg.chatType === "group"
+    conversationKind === "group"
       ? stripMentionsForCommand(
           rawCommandBody,
           buildMentionConfig(params.cfg, params.route.agentId, {
@@ -470,19 +471,18 @@ export async function processMessage(params: {
         authorized: false,
         body: commandBody,
       };
-  const { onModelSelected, ...replyPipeline } = createChannelMessageReplyPipeline({
+  const replyPipeline = createChannelMessageReplyPipeline({
     cfg: params.cfg,
     agentId: params.route.agentId,
     channel: "whatsapp",
     accountId: params.route.accountId,
   });
   const audioMode = resolveAudioDeliveryMode(params.cfg);
-  const selectedModelCallback = async (
-    selection: Parameters<NonNullable<typeof onModelSelected>>[0],
+  const selectedModelCallback: NonNullable<GetReplyOptions["onModelSelected"]> = async (
+    selection,
   ) => {
-    onModelSelected?.(selection);
     if (!hasAudioAttachment || !audioMediaPath) {
-      return;
+      return undefined;
     }
     const delivery = resolveAudioDelivery({
       mode: audioMode,
@@ -491,9 +491,9 @@ export async function processMessage(params: {
     if (delivery === "native") {
       return { prompt: `${nativeCombinedBody}\n${audioMediaPath}`, transcriptPrompt: combinedBody };
     }
-    audioTranscript = audioTranscript ?? (await getAudioTranscript());
+    audioTranscript = audioTranscript ?? (await getAudioTranscript()) ?? undefined;
     const transcriptBody =
-      audioTranscript !== null && audioTranscript !== undefined
+      audioTranscript !== undefined
         ? buildCombinedBody({
             ...params.msg,
             payload: { ...params.msg.payload, body: audioTranscript },

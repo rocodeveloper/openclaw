@@ -41,15 +41,30 @@ const AGENT_TURN_AUDIO_MEDIA_TYPES = new Set([
 ]);
 
 function isImageAgentTurnAttachment(attachment: MediaAttachment): boolean {
-  return attachment.mime?.startsWith("image/") === true;
+  return normalizeAgentTurnMediaType(attachment.mime).startsWith("image/");
 }
 
-function isSupportedAgentTurnAttachment(attachment: MediaAttachment): boolean {
+function normalizeAgentTurnMediaType(mediaType: string | undefined): string {
+  return (mediaType ?? "application/octet-stream").trim().toLowerCase();
+}
+
+function isAudioAgentTurnAttachment(attachment: MediaAttachment): boolean {
+  const mediaType = normalizeAgentTurnMediaType(attachment.mime).split(";", 1)[0]?.trim();
+  return AGENT_TURN_AUDIO_MEDIA_TYPES.has(mediaType);
+}
+
+function isAgentTurnAudioCandidate(attachment: MediaAttachment): boolean {
+  return normalizeAgentTurnMediaType(attachment.mime).startsWith("audio/");
+}
+
+function isSupportedAgentTurnAttachment(
+  attachment: MediaAttachment,
+  includeAudio: boolean,
+): boolean {
   if (isImageAgentTurnAttachment(attachment)) {
     return true;
   }
-  const mediaType = attachment.mime?.split(";", 1)[0]?.trim().toLowerCase();
-  return mediaType ? AGENT_TURN_AUDIO_MEDIA_TYPES.has(mediaType) : false;
+  return includeAudio && !attachment.alreadyTranscribed && isAudioAgentTurnAttachment(attachment);
 }
 
 function hasInboundHistoryMedia(ctx: MsgContext): boolean {
@@ -59,19 +74,42 @@ function hasInboundHistoryMedia(ctx: MsgContext): boolean {
   );
 }
 
-/** Resolves image attachments for the current agent turn and recent image history. */
+export async function canIncludeNativeAgentTurnAudio(params: {
+  ctx: MsgContext;
+  runtime?: AgentTurnAttachmentRuntime;
+}): Promise<boolean> {
+  if (!hasInboundMedia(params.ctx)) {
+    return false;
+  }
+  const runtime = params.runtime ?? (await loadAgentTurnMediaRuntime());
+  const audioAttachments = runtime
+    .normalizeAttachments(params.ctx)
+    .filter(isAgentTurnAudioCandidate);
+  return (
+    audioAttachments.length > 0 &&
+    audioAttachments.every(
+      (attachment) =>
+        !attachment.alreadyTranscribed &&
+        Boolean(normalizeOptionalString(attachment.path)) &&
+        isAudioAgentTurnAttachment(attachment),
+    )
+  );
+}
+
 export async function resolveAgentTurnAttachments(params: {
   ctx: MsgContext;
   cfg: OpenClawConfig;
   runtime?: AgentTurnAttachmentRuntime;
   includeRecentHistoryImages?: boolean;
   includeAttachmentIndexes?: boolean;
+  includeAudio?: boolean;
 }): Promise<{
   attachments: AgentTurnAttachment[];
   attachmentIndexes?: number[];
   recentHistoryImages: RecentInboundHistoryImage[];
 }> {
   const includeRecentHistoryImages = params.includeRecentHistoryImages ?? true;
+  const includeAudio = params.includeAudio ?? true;
   if (
     !hasInboundMedia(params.ctx) &&
     !(includeRecentHistoryImages && hasInboundHistoryMedia(params.ctx))
@@ -114,8 +152,8 @@ export async function resolveAgentTurnAttachments(params: {
   const resultIndexes: number[] = [];
   const resolvedHistoryImages: RecentInboundHistoryImage[] = [];
   const resolveAttachment = async (attachment: MediaAttachment): Promise<boolean> => {
-    const mediaType = attachment.mime ?? "application/octet-stream";
-    if (!isSupportedAgentTurnAttachment(attachment)) {
+    const mediaType = normalizeAgentTurnMediaType(attachment.mime);
+    if (!isSupportedAgentTurnAttachment(attachment, includeAudio)) {
       return false;
     }
     if (!normalizeOptionalString(attachment.path)) {

@@ -115,6 +115,7 @@ export async function resolveManagerRuntimeCapabilities(params: {
   }
   return {
     controls: [...controls].toSorted(),
+    ...(reported?.input?.length ? { input: [...reported.input] } : {}),
     ...(normalizedKeys.size > 0 ? { configOptionKeys: [...normalizedKeys] } : {}),
   };
 }

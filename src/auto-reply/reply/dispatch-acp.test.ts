@@ -25,6 +25,7 @@ import { createAcpSessionMeta, createAcpTestConfig } from "./test-fixtures/acp-r
 
 const managerMocks = vi.hoisted(() => ({
   resolveSession: vi.fn(),
+  getSessionStatus: vi.fn(),
   runTurn: vi.fn(),
   getObservabilitySnapshot: vi.fn(() => ({
     turns: { queueDepth: 0 },
@@ -85,6 +86,15 @@ const ttsMocks = vi.hoisted(() => ({
     return params.payload;
   }),
   resolveTtsConfig: vi.fn((_cfg: OpenClawConfig) => ({ mode: "final" })),
+}));
+
+const statusTtsMocks = vi.hoisted(() => ({
+  resolveStatusTtsSnapshot: vi.fn(() => ({
+    autoMode: "always" as "always" | "inbound",
+    provider: "auto",
+    maxLength: 1500,
+    summarize: true,
+  })),
 }));
 
 const mediaUnderstandingMocks = vi.hoisted(() => ({
@@ -161,12 +171,7 @@ vi.mock("./dispatch-acp-tts.runtime.js", () => ({
 }));
 
 vi.mock("../../tts/status-config.js", () => ({
-  resolveStatusTtsSnapshot: () => ({
-    autoMode: "always",
-    provider: "auto",
-    maxLength: 1500,
-    summarize: true,
-  }),
+  resolveStatusTtsSnapshot: () => statusTtsMocks.resolveStatusTtsSnapshot(),
 }));
 
 vi.mock("./dispatch-acp-media.runtime.js", () => ({
@@ -174,13 +179,18 @@ vi.mock("./dispatch-acp-media.runtime.js", () => ({
     mediaUnderstandingMocks.applyMediaUnderstanding(params),
   isMediaUnderstandingSkipError: (error: unknown): error is MediaUnderstandingSkipError =>
     error instanceof Error && error.name === "MediaUnderstandingSkipError",
-  normalizeAttachments: (ctx: { MediaPath?: string; MediaType?: string }) =>
+  normalizeAttachments: (ctx: {
+    MediaPath?: string;
+    MediaType?: string;
+    MediaTranscribedIndexes?: number[];
+  }) =>
     ctx.MediaPath
       ? [
           {
             path: ctx.MediaPath,
             mime: ctx.MediaType,
             index: 0,
+            alreadyTranscribed: ctx.MediaTranscribedIndexes?.includes(0) === true,
           },
         ]
       : [],
@@ -299,11 +309,25 @@ function createDispatcher(): {
   return { dispatcher, counts };
 }
 
-function setReadyAcpResolution() {
+function setReadyAcpResolution(
+  overrides?: Parameters<typeof createAcpSessionMeta>[0],
+  input: Array<"audio"> = ["audio"],
+) {
+  const meta = createAcpSessionMeta(overrides);
   managerMocks.resolveSession.mockReturnValue({
     kind: "ready",
     sessionKey,
-    meta: createAcpSessionMeta(),
+    meta,
+  });
+  managerMocks.getSessionStatus.mockResolvedValue({
+    sessionKey,
+    backend: meta.backend,
+    agent: meta.agent,
+    state: meta.state,
+    mode: meta.mode,
+    runtimeOptions: {},
+    capabilities: { controls: [], ...(input.length > 0 ? { input } : {}) },
+    lastActivityAt: meta.lastActivityAt,
   });
 }
 
@@ -338,6 +362,7 @@ async function runDispatch(params: {
   suppressReplyLifecycle?: boolean;
   sourceReplyDeliveryMode?: "automatic" | "message_tool_only";
   toolsAllow?: string[];
+  inboundAudio?: boolean;
 }) {
   const targetSessionKey = params.sessionKeyOverride ?? sessionKey;
   return tryDispatchAcpReply({
@@ -354,7 +379,7 @@ async function runDispatch(params: {
     sessionKey: targetSessionKey,
     images: params.images,
     abortSignal: params.abortSignal,
-    inboundAudio: false,
+    inboundAudio: params.inboundAudio ?? false,
     suppressUserDelivery: params.suppressUserDelivery,
     suppressReplyLifecycle: params.suppressReplyLifecycle,
     sourceReplyDeliveryMode: params.sourceReplyDeliveryMode,
@@ -462,6 +487,7 @@ describe("tryDispatchAcpReply", () => {
     auditMocks.emitAcpLifecycleEnd.mockReset();
     auditMocks.emitAcpLifecycleError.mockReset();
     managerMocks.resolveSession.mockReset();
+    managerMocks.getSessionStatus.mockReset();
     managerMocks.runTurn.mockReset();
     managerMocks.runTurn.mockImplementation(
       async ({ onEvent }: { onEvent?: (event: unknown) => Promise<void> }) => {
@@ -489,6 +515,13 @@ describe("tryDispatchAcpReply", () => {
     });
     ttsMocks.resolveTtsConfig.mockReset();
     ttsMocks.resolveTtsConfig.mockReturnValue({ mode: "final" });
+    statusTtsMocks.resolveStatusTtsSnapshot.mockReset();
+    statusTtsMocks.resolveStatusTtsSnapshot.mockReturnValue({
+      autoMode: "always",
+      provider: "auto",
+      maxLength: 1500,
+      summarize: true,
+    });
     mediaUnderstandingMocks.applyMediaUnderstanding.mockReset();
     mediaUnderstandingMocks.applyMediaUnderstanding.mockResolvedValue(undefined);
     acpAttachmentBuffers.clear();
@@ -1540,7 +1573,7 @@ describe("tryDispatchAcpReply", () => {
     }
   });
 
-  it("forwards supported audio attachments into ACP turns without a text prompt", async () => {
+  it("forwards supported audio attachments to Codex without a text prompt", async () => {
     setReadyAcpResolution();
     const audioPath = "/tmp/openclaw-inbound-audio.ogg";
     const audio = Buffer.from("audio-bytes");
@@ -1550,7 +1583,7 @@ describe("tryDispatchAcpReply", () => {
       bodyForAgent: "   ",
       ctxOverrides: {
         MediaPath: audioPath,
-        MediaType: "audio/ogg; codecs=opus",
+        MediaType: "Audio/Ogg; Codecs=Opus",
       },
     });
 
@@ -1560,6 +1593,110 @@ describe("tryDispatchAcpReply", () => {
         data: audio.toString("base64"),
       },
     ]);
+    const mediaUnderstandingCall = requireRecord(
+      mockArg(mediaUnderstandingMocks.applyMediaUnderstanding, 0, 0, "media understanding"),
+      "media understanding",
+    );
+    const mediaUnderstandingCfg = requireRecord(mediaUnderstandingCall.cfg, "media config");
+    expect(mediaUnderstandingCfg).toMatchObject({
+      tools: { media: { audio: { enabled: false } } },
+    });
+  });
+
+  it("uses transcription instead of raw ACP audio when transcript delivery is configured", async () => {
+    setReadyAcpResolution();
+    const audioPath = "/tmp/openclaw-transcribed-audio.ogg";
+    acpAttachmentBuffers.set(audioPath, Buffer.from("audio-bytes"));
+
+    await runDispatch({
+      bodyForAgent: "transcribed audio",
+      cfg: createAcpTestConfig({
+        tools: { media: { audio: { enabled: true, delivery: "transcript" } } },
+      }),
+      ctxOverrides: {
+        MediaPath: audioPath,
+        MediaType: "audio/ogg",
+      },
+    });
+
+    expect(runTurnCall().attachments).toBeUndefined();
+    const mediaUnderstandingCall = requireRecord(
+      mockArg(mediaUnderstandingMocks.applyMediaUnderstanding, 0, 0, "media understanding"),
+      "media understanding",
+    );
+    expect(mediaUnderstandingCall.cfg).toMatchObject({
+      tools: { media: { audio: { enabled: true, delivery: "transcript" } } },
+    });
+  });
+
+  it("does not resend ACP audio that an inbound preflight already transcribed", async () => {
+    setReadyAcpResolution();
+    const audioPath = "/tmp/openclaw-preflight-audio.ogg";
+    acpAttachmentBuffers.set(audioPath, Buffer.from("audio-bytes"));
+
+    await runDispatch({
+      bodyForAgent: "preflight transcript",
+      ctxOverrides: {
+        MediaPath: audioPath,
+        MediaType: "audio/ogg",
+        MediaTranscribedIndexes: [0],
+      },
+    });
+
+    expect(runTurnCall().attachments).toBeUndefined();
+  });
+
+  it("uses transcription instead of raw audio for non-Codex ACP agents", async () => {
+    setReadyAcpResolution({ agent: "claude" }, []);
+    const audioPath = "/tmp/openclaw-claude-audio.ogg";
+    acpAttachmentBuffers.set(audioPath, Buffer.from("audio-bytes"));
+
+    await runDispatch({
+      bodyForAgent: "transcribed audio",
+      cfg: createAcpTestConfig({
+        tools: { media: { audio: { enabled: true } } },
+      }),
+      ctxOverrides: {
+        MediaPath: audioPath,
+        MediaType: "audio/ogg",
+      },
+    });
+
+    expect(runTurnCall().attachments).toBeUndefined();
+    const mediaUnderstandingCall = requireRecord(
+      mockArg(mediaUnderstandingMocks.applyMediaUnderstanding, 0, 0, "media understanding"),
+      "media understanding",
+    );
+    expect(mediaUnderstandingCall.cfg).toMatchObject({
+      tools: { media: { audio: { enabled: true } } },
+    });
+  });
+
+  it("uses transcription when ACP cannot carry the inbound audio format", async () => {
+    setReadyAcpResolution();
+    const audioPath = "/tmp/openclaw-unsupported-audio.aac";
+    acpAttachmentBuffers.set(audioPath, Buffer.from("audio-bytes"));
+
+    await runDispatch({
+      bodyForAgent: "transcribed audio",
+      cfg: createAcpTestConfig({
+        tools: { media: { audio: { enabled: true } } },
+      }),
+      ctxOverrides: {
+        MediaPath: audioPath,
+        MediaType: "audio/aac",
+      },
+    });
+
+    expect(managerMocks.getSessionStatus).not.toHaveBeenCalled();
+    expect(runTurnCall().attachments).toBeUndefined();
+    const mediaUnderstandingCall = requireRecord(
+      mockArg(mediaUnderstandingMocks.applyMediaUnderstanding, 0, 0, "media understanding"),
+      "media understanding",
+    );
+    expect(mediaUnderstandingCall.cfg).toMatchObject({
+      tools: { media: { audio: { enabled: true } } },
+    });
   });
 
   it("surfaces ACP policy errors as final error replies", async () => {
@@ -2136,6 +2273,42 @@ describe("tryDispatchAcpReply", () => {
     expect(finalPayload.spokenText).toBe("WebChat ACP block reply.");
     expect(finalPayload.trustedLocalMedia).toBe(true);
     expect(result?.queuedFinal).toBe(true);
+  });
+
+  it("synthesizes an ACP audio reply in inbound TTS mode after a voice request", async () => {
+    setReadyAcpResolution();
+    statusTtsMocks.resolveStatusTtsSnapshot.mockReturnValue({
+      autoMode: "inbound",
+      provider: "auto",
+      maxLength: 1500,
+      summarize: true,
+    });
+    ttsMocks.resolveTtsConfig.mockReturnValue({ mode: "final" });
+    queueTtsReplies({
+      mediaUrl: "/tmp/openclaw-media/acp-voice-reply.ogg",
+      audioAsVoice: true,
+    } as MockTtsReply);
+    mockVisibleTextTurn("Voice response.");
+    const { dispatcher } = createDispatcher();
+
+    await runDispatch({
+      bodyForAgent: "voice request",
+      dispatcher,
+      inboundAudio: true,
+      ctxOverrides: {
+        Provider: "whatsapp",
+        Surface: "whatsapp",
+      },
+    });
+
+    expect(ttsMocks.maybeApplyTtsToPayload).toHaveBeenCalledWith(
+      expect.objectContaining({ inboundAudio: true }),
+    );
+    expect(dispatcher.sendFinalReply).toHaveBeenCalledOnce();
+    expect(dispatcherCall(dispatcher.sendFinalReply)).toMatchObject({
+      mediaUrl: "/tmp/openclaw-media/acp-voice-reply.ogg",
+      audioAsVoice: true,
+    });
   });
 
   it("falls back to final text when a later telegram ACP block delivery fails", async () => {

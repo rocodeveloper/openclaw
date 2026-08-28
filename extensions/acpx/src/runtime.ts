@@ -27,7 +27,12 @@ import {
 import { parseStrictPositiveInteger } from "openclaw/plugin-sdk/number-runtime";
 import { redactSensitiveText } from "openclaw/plugin-sdk/security-runtime";
 import { normalizeStringEntries } from "openclaw/plugin-sdk/string-coerce-runtime";
-import { AcpRuntimeError, type AcpRuntime, type AcpRuntimeErrorCode } from "../runtime-api.js";
+import {
+  AcpRuntimeError,
+  type AcpRuntime,
+  type AcpRuntimeCapabilities,
+  type AcpRuntimeErrorCode,
+} from "../runtime-api.js";
 import { splitCommandParts } from "./command-line.js";
 import {
   createAcpxProcessLeaseId,
@@ -1283,8 +1288,15 @@ export class AcpxRuntime implements AcpRuntime {
     };
   }
 
-  getCapabilities(): ReturnType<BaseAcpxRuntime["getCapabilities"]> {
-    return this.delegate.getCapabilities();
+  async getCapabilities(
+    input: Parameters<NonNullable<AcpRuntime["getCapabilities"]>>[0] = {},
+  ): Promise<AcpRuntimeCapabilities> {
+    const capabilities = await this.delegate.getCapabilities();
+    if (!input.handle) {
+      return capabilities;
+    }
+    const command = await this.resolveCommandForHandle(input.handle);
+    return isCodexAcpCommand(command) ? { ...capabilities, input: ["audio"] } : capabilities;
   }
 
   async getStatus(

@@ -146,6 +146,10 @@ tools:
 
 OpenClaw sends only one representation to the selected model. A channel can still transcribe before model selection when it needs text for admission or mention checks.
 
+ACP runtimes must advertise audio input support. ACPX derives this capability from the resolved agent command, so configured Codex aliases also work.
+
+When a channel already transcribed an attachment, ACP uses that transcript and does not send the raw audio again.
+
 Set `messages.tts.auto` to `inbound` to synthesize replies to inbound voice notes. ACP-backed agents preserve the inbound audio state for this TTS mode.
 
 Deepgram, ElevenLabs, Mistral, OpenAI, and xAI also register Voice Call

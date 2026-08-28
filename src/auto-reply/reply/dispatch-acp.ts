@@ -36,6 +36,7 @@ import { markReplyPayloadAsTtsSupplement } from "../reply-payload.js";
 import type { FinalizedMsgContext } from "../templating.js";
 import { createAcpReplyProjector } from "./acp-projector.js";
 import {
+  canIncludeNativeAgentTurnAudio,
   loadAgentTurnMediaRuntime,
   resolveAgentTurnAttachments,
   resolveInlineAgentImageAttachments,
@@ -173,6 +174,22 @@ function isRestrictiveRuntimeToolsAllow(toolsAllow: string[] | undefined): boole
     return false;
   }
   return !toolsAllow.some((entry) => normalizeLowercaseStringOrEmpty(entry) === "*");
+}
+
+function disableAudioUnderstanding(cfg: OpenClawConfig): OpenClawConfig {
+  return {
+    ...cfg,
+    tools: {
+      ...cfg.tools,
+      media: {
+        ...cfg.tools?.media,
+        audio: {
+          ...cfg.tools?.media?.audio,
+          enabled: false,
+        },
+      },
+    },
+  };
 }
 
 async function hasBoundConversationForSession(params: {
@@ -627,13 +644,34 @@ export async function tryDispatchAcpReply(params: {
       auditTerminalOutcome = "blocked";
       throw agentPolicyError;
     }
+    let useNativeAcpAudio = false;
+    if (
+      (params.cfg.tools?.media?.audio?.delivery ?? "auto") !== "transcript" &&
+      (await canIncludeNativeAgentTurnAudio({ ctx: params.ctx }))
+    ) {
+      try {
+        const sessionStatus = await acpManager.getSessionStatus({
+          cfg: params.cfg,
+          sessionKey: canonicalSessionKey,
+          ...(params.abortSignal ? { signal: params.abortSignal } : {}),
+        });
+        useNativeAcpAudio = sessionStatus.capabilities.input?.includes("audio") === true;
+      } catch (error) {
+        logVerbose(
+          `dispatch-acp: could not resolve native audio capability, using transcription: ${formatErrorMessage(error)}`,
+        );
+      }
+    }
+    const mediaUnderstandingCfg = useNativeAcpAudio
+      ? disableAudioUnderstanding(params.cfg)
+      : params.cfg;
     let extractedFileImages = params.extractedFileImages ?? [];
     if (hasInboundMediaForUnderstanding(params.ctx) && !params.ctx.MediaUnderstanding?.length) {
       try {
         const { applyMediaUnderstanding } = await loadAgentTurnMediaRuntime();
         const mediaResult = await applyMediaUnderstanding({
           ctx: params.ctx,
-          cfg: params.cfg,
+          cfg: mediaUnderstandingCfg,
           agentId: acpAgentId,
           agentDir: resolveAgentDir(params.cfg, acpAgentId),
           workspaceDir: resolveAgentWorkspaceDir(params.cfg, acpAgentId),
@@ -653,6 +691,7 @@ export async function tryDispatchAcpReply(params: {
       ctx: params.ctx,
       cfg: params.cfg,
       includeAttachmentIndexes: true,
+      includeAudio: useNativeAcpAudio,
     });
     const mediaAttachments = resolvedTurnAttachments.attachments;
     const inlineAttachments = resolveInlineAgentImageAttachments(params.images);

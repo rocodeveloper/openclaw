@@ -1,7 +1,7 @@
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 import { normalizeAccountId, normalizeOptionalAccountId } from "openclaw/plugin-sdk/routing";
 import { getSelfIdentity, getSenderIdentity } from "../../identity.js";
-import type { WebInboundMessage } from "../../inbound/types.js";
+import type { AdmittedWebInboundMessage } from "../../inbound/types.js";
 import { getWhatsAppRuntime } from "../../runtime.js";
 import type { MentionConfig } from "../mentions.js";
 import { resolveOwnerList } from "../mentions.js";
@@ -34,7 +34,7 @@ export function isUnregisterCommand(text: string | undefined): boolean {
 
 function isOwnerSender(
   baseMentionConfig: MentionConfig,
-  msg: WebInboundMessage,
+  msg: AdmittedWebInboundMessage,
   authDir?: string,
 ): boolean {
   const sender = normalizeE164(getSenderIdentity(msg, authDir).e164 ?? "");
@@ -97,7 +97,7 @@ function ensureGroupsContainer(cfg: OpenClawConfig, accountId: string | undefine
 }
 
 export async function handleUnregisteredGroup(params: {
-  msg: WebInboundMessage;
+  msg: AdmittedWebInboundMessage;
   conversationId: string;
   accountId?: string;
   agentId: string;
@@ -165,7 +165,7 @@ export async function handleUnregisteredGroup(params: {
 }
 
 export async function handleGroupUnregister(params: {
-  msg: WebInboundMessage;
+  msg: AdmittedWebInboundMessage;
   conversationId: string;
   accountId?: string;
   baseMentionConfig: MentionConfig;

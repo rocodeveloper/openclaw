@@ -25,7 +25,6 @@ import { markWhatsAppVisibleDeliveryError } from "../util.js";
 import { formatGroupMembers } from "./group-members.js";
 import type { GroupHistoryEntry } from "./inbound-context.js";
 import {
-  createChannelMessageReplyPipeline,
   dispatchReplyWithBufferedBlockDispatcher,
   finalizeInboundContext,
   getAgentScopedMediaLocalRoots,
@@ -41,6 +40,7 @@ import {
   shouldLogVerbose,
   toLocationContext,
   type getChildLogger,
+  type GetReplyOptions,
   type getReplyFromConfig,
   type LoadConfigFn,
   type ReplyPayload,
@@ -48,9 +48,7 @@ import {
 } from "./inbound-dispatch.runtime.js";
 
 type ReplyLifecycleKind = "tool" | "block" | "final";
-type ChannelReplyOnModelSelected = NonNullable<
-  ReturnType<typeof createChannelMessageReplyPipeline>["onModelSelected"]
->;
+type ChannelReplyOnModelSelected = NonNullable<GetReplyOptions["onModelSelected"]>;
 
 type WhatsAppDispatchPipeline = {
   responsePrefix?: string;

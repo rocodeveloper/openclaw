@@ -24,6 +24,7 @@ export {
   finalizeInboundContext,
   resolveChunkMode,
   resolveTextChunkLimit,
+  type GetReplyOptions,
   type getReplyFromConfig,
   type ReplyPayload,
 } from "openclaw/plugin-sdk/reply-runtime";
