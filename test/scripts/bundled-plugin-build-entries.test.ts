@@ -157,7 +157,7 @@ describe("bundled plugin build entries", () => {
     expectNoPrefixMatches(artifacts, "dist/extensions/qa-matrix/");
   });
 
-  it("keeps explicitly downloadable plugins out of bundled package artifacts", () => {
+  it("keeps downloadable plugins out and bundled channels in package artifacts", () => {
     const entries = listBundledPluginBuildEntries();
     const artifacts = listBundledPluginPackArtifacts();
 
@@ -165,9 +165,13 @@ describe("bundled plugin build entries", () => {
       expectSomePrefixMatch(Object.keys(entries), `extensions/${pluginId}/`);
       expectNoPrefixMatches(artifacts, `dist/extensions/${pluginId}/`);
     }
-    for (const pluginId of ["qqbot", "whatsapp"]) {
+    for (const pluginId of ["qqbot"]) {
       expectNoPrefixMatches(Object.keys(entries), `extensions/${pluginId}/`);
       expectNoPrefixMatches(artifacts, `dist/extensions/${pluginId}/`);
+    }
+    for (const pluginId of ["discord", "whatsapp"]) {
+      expectSomePrefixMatch(Object.keys(entries), `extensions/${pluginId}/`);
+      expectSomePrefixMatch(artifacts, `dist/extensions/${pluginId}/`);
     }
   });
 

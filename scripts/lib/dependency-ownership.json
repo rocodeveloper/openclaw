@@ -21,6 +21,11 @@
       "class": "core-runtime",
       "risk": ["interactive-cli"]
     },
+    "@discordjs/voice": {
+      "owner": "plugin:discord",
+      "class": "plugin-runtime",
+      "risk": ["discord-voice", "network"]
+    },
     "@lydell/node-pty": {
       "owner": "core:tui-terminal",
       "class": "core-runtime",
@@ -67,16 +72,36 @@
       "class": "default-runtime-initially",
       "risk": ["provider-sdk", "network"]
     },
+    "@openclaw/ai": {
+      "owner": "core:ai-runtime",
+      "class": "core-runtime",
+      "risk": ["provider-routing", "model-io"]
+    },
     "@openclaw/fs-safe": {
       "owner": "core:filesystem-safety",
       "class": "core-runtime",
       "risk": ["filesystem", "path-safety"]
+    },
+    "@openclaw/proxyline": {
+      "owner": "core:proxy",
+      "class": "core-runtime",
+      "risk": ["network", "proxy"]
     },
     "@silvia-odwyer/photon-node": {
       "owner": "core:media",
       "class": "core-runtime",
       "activation": ["agent.tool.read.image.bmp"],
       "risk": ["wasm", "parser", "untrusted-files"]
+    },
+    "audio-decode": {
+      "owner": "plugin:whatsapp",
+      "class": "plugin-runtime",
+      "risk": ["audio-decoding", "untrusted-files"]
+    },
+    "baileys": {
+      "owner": "plugin:whatsapp",
+      "class": "plugin-runtime",
+      "risk": ["whatsapp-web", "network"]
     },
     "chalk": {
       "owner": "core:cli",
@@ -102,6 +127,11 @@
       "owner": "core:agent-editing",
       "class": "core-runtime",
       "risk": ["diff"]
+    },
+    "discord-api-types": {
+      "owner": "plugin:discord",
+      "class": "plugin-runtime",
+      "risk": ["discord-api"]
     },
     "dotenv": {
       "owner": "core:config",
@@ -143,11 +173,6 @@
       "class": "core-runtime",
       "risk": ["pattern-matching"]
     },
-    "@openclaw/proxyline": {
-      "owner": "core:proxy",
-      "class": "core-runtime",
-      "risk": ["network", "proxy"]
-    },
     "jiti": {
       "owner": "core:plugin-loader",
       "class": "core-runtime",
@@ -173,6 +198,11 @@
       "class": "plugin-runtime",
       "activation": ["tools.web.fetch.readability", "plugins.entries.web-readability.enabled"],
       "risk": ["parser", "untrusted-html"]
+    },
+    "libopus-wasm": {
+      "owner": "plugin:discord",
+      "class": "plugin-runtime",
+      "risk": ["wasm", "audio-decoding"]
     },
     "markdown-it": {
       "owner": "core:markdown-rendering",
