@@ -108,7 +108,7 @@ describe("applyGroupGating allowlist drop warning", () => {
 
     const result = await applyGroupGating(params);
 
-    expect(result).toEqual({ shouldProcess: false });
+    expect(result).toEqual({ shouldProcess: false, unregistered: true });
     expect(warn).toHaveBeenCalledTimes(1);
     expect(params.logVerbose).toHaveBeenCalledWith(
       'Dropping message from unregistered WhatsApp group unregistered@g.us. Add the group JID to channels.whatsapp.groups, or add "*" there to admit all groups. Sender authorization still applies.',
