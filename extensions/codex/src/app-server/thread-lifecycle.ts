@@ -1946,8 +1946,11 @@ function buildUserInput(
   params: EmbeddedRunAttemptParams,
   promptText: string = params.prompt,
 ): CodexUserInput[] {
-  const imageInputs = (params.images ?? []).map((image): CodexUserInput => {
-    const imageUrl = sanitizeInlineImageDataUrl(`data:${image.mimeType};base64,${image.data}`);
+  const mediaInputs = (params.images ?? []).map((media): CodexUserInput => {
+    if (media.type === "audio") {
+      return { type: "audio", url: `data:${media.mimeType};base64,${media.data}` };
+    }
+    const imageUrl = sanitizeInlineImageDataUrl(`data:${media.mimeType};base64,${media.data}`);
     return imageUrl
       ? { type: "image", url: imageUrl }
       : {
@@ -1956,7 +1959,7 @@ function buildUserInput(
           text_elements: [],
         };
   });
-  return [{ type: "text", text: promptText, text_elements: [] }, ...imageInputs];
+  return [{ type: "text", text: promptText, text_elements: [] }, ...mediaInputs];
 }
 
 export function resolveCodexAppServerModelProvider(params: {

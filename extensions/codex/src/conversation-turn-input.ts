@@ -12,6 +12,7 @@ type InboundMedia = {
 };
 
 const IMAGE_EXTENSIONS = new Set([".avif", ".gif", ".jpeg", ".jpg", ".png", ".webp"]);
+const AUDIO_EXTENSIONS = new Set([".aac", ".flac", ".m4a", ".mp3", ".ogg", ".opus", ".wav"]);
 
 export function buildCodexConversationTurnInput(params: {
   prompt: string;
@@ -20,7 +21,7 @@ export function buildCodexConversationTurnInput(params: {
   return [
     { type: "text", text: params.prompt, text_elements: [] },
     ...extractInboundMedia(params.event)
-      .map(toCodexImageInput)
+      .map(toCodexMediaInput)
       .filter((item): item is CodexUserInput => item !== undefined),
   ];
 }
@@ -51,7 +52,17 @@ function extractInboundMedia(event: PluginHookInboundClaimEvent): InboundMedia[]
   return media;
 }
 
-function toCodexImageInput(media: InboundMedia): CodexUserInput | undefined {
+function toCodexMediaInput(media: InboundMedia): CodexUserInput | undefined {
+  if (isAudioMedia(media)) {
+    const localPath = media.path ?? readLocalMediaPath(media.url);
+    if (localPath) {
+      const normalized = normalizeFileUrl(localPath);
+      return normalized ? { type: "localAudio", path: normalized } : undefined;
+    }
+    return media.url?.toLowerCase().startsWith("data:")
+      ? { type: "audio", url: media.url }
+      : undefined;
+  }
   if (!isImageMedia(media)) {
     return undefined;
   }
@@ -61,6 +72,20 @@ function toCodexImageInput(media: InboundMedia): CodexUserInput | undefined {
     return normalized ? { type: "localImage", path: normalized } : undefined;
   }
   return media.url ? { type: "image", url: media.url } : undefined;
+}
+
+function isAudioMedia(media: InboundMedia): boolean {
+  if (media.mimeType?.toLowerCase().startsWith("audio/")) {
+    return true;
+  }
+  const candidate = media.path ?? media.url;
+  if (!candidate) {
+    return false;
+  }
+  if (candidate.toLowerCase().startsWith("data:audio/")) {
+    return true;
+  }
+  return AUDIO_EXTENSIONS.has(path.extname(candidate.split(/[?#]/, 1)[0] ?? "").toLowerCase());
 }
 
 function isImageMedia(media: InboundMedia): boolean {

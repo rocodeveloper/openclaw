@@ -908,6 +908,25 @@ describe("Codex app-server turn input image sanitizing", () => {
       },
     ]);
   });
+
+  it("maps shared inline audio content to Codex audio input", () => {
+    const request = buildTurnStartParams(
+      createAttemptParams({
+        provider: "openai",
+        images: [{ type: "audio", mimeType: "audio/ogg", data: "AAE=" }],
+      }),
+      {
+        threadId: "thread-1",
+        cwd: "/repo",
+        appServer: createAppServerOptions() as never,
+      },
+    );
+
+    expect(request.input).toEqual([
+      { type: "text", text: "test prompt", text_elements: [] },
+      { type: "audio", url: "data:audio/ogg;base64,AAE=" },
+    ]);
+  });
 });
 
 describe("Codex app-server turn params", () => {

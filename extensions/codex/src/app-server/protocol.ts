@@ -85,6 +85,14 @@ export type CodexUserInput =
   | {
       type: "localImage";
       path: string;
+    }
+  | {
+      type: "audio";
+      url: string;
+    }
+  | {
+      type: "localAudio";
+      path: string;
     };
 
 export type CodexDynamicToolFunctionSpec = JsonObject & {

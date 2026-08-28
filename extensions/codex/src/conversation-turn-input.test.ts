@@ -164,4 +164,45 @@ describe("codex conversation turn input", () => {
       { type: "localImage", path: "C:\\OpenClaw QA\\photo.png" },
     ]);
   });
+
+  it("maps local audio attachments to Codex local audio input", () => {
+    expect(
+      buildCodexConversationTurnInput({
+        prompt: "listen",
+        event: {
+          content: "listen",
+          channel: "webchat",
+          isGroup: false,
+          metadata: {
+            mediaPath: "/tmp/voice.ogg",
+            mediaType: "audio/ogg",
+          },
+        },
+      }),
+    ).toEqual([
+      { type: "text", text: "listen", text_elements: [] },
+      { type: "localAudio", path: "/tmp/voice.ogg" },
+    ]);
+  });
+
+  it("maps inline audio data URLs to Codex audio input", () => {
+    const audioUrl = "data:audio/ogg;base64,AAE=";
+    expect(
+      buildCodexConversationTurnInput({
+        prompt: "listen",
+        event: {
+          content: "listen",
+          channel: "webchat",
+          isGroup: false,
+          metadata: {
+            mediaUrl: audioUrl,
+            mediaType: "audio/ogg",
+          },
+        },
+      }),
+    ).toEqual([
+      { type: "text", text: "listen", text_elements: [] },
+      { type: "audio", url: audioUrl },
+    ]);
+  });
 });
