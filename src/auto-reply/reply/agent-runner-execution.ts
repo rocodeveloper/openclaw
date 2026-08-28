@@ -2302,6 +2302,9 @@ async function runAgentTurnWithFallbackInternal(
               model,
               sessionEntry: params.getActiveSessionEntry(),
             });
+            const selectedModelInput = runtimeConfig.models?.providers?.[provider]?.models.find(
+              (candidate) => candidate.id === model,
+            )?.input;
             const activeProbe = effectiveRun.autoFallbackPrimaryProbe;
             if (activeProbe && provider === activeProbe.provider && model === activeProbe.model) {
               markAutoFallbackPrimaryProbe({
@@ -2311,10 +2314,11 @@ async function runAgentTurnWithFallbackInternal(
             }
             // Notify that model selection is complete (including after fallback).
             // This allows responsePrefix template interpolation with the actual model.
-            params.opts?.onModelSelected?.({
+            const selectedModelResult = await params.opts?.onModelSelected?.({
               provider,
               model,
               thinkLevel: candidateThinkLevel,
+              ...(selectedModelInput ? { input: selectedModelInput } : {}),
             });
             let rollbackFallbackCandidateSelection: (() => Promise<void>) | undefined;
             try {
@@ -2494,8 +2498,9 @@ async function runAgentTurnWithFallbackInternal(
                     workspaceDir: params.followupRun.run.workspaceDir,
                     cwd: params.followupRun.run.cwd,
                     config: runtimeConfig,
-                    prompt: params.commandBody,
-                    transcriptPrompt: params.transcriptCommandBody,
+                    prompt: selectedModelResult?.prompt ?? params.commandBody,
+                    transcriptPrompt:
+                      selectedModelResult?.transcriptPrompt ?? params.transcriptCommandBody,
                     suppressNextUserMessagePersistence: suppressQueuedUserPersistenceForCandidate,
                     userTurnTranscriptRecorder,
                     onUserMessagePersisted: notifyUserMessagePersisted,
@@ -2657,8 +2662,9 @@ async function runAgentTurnWithFallbackInternal(
                     fastModeAutoProgressState,
                     isFinalFallbackAttempt: runOptions?.isFinalFallbackAttempt,
                     sandboxSessionKey: params.runtimePolicySessionKey,
-                    prompt: params.commandBody,
-                    transcriptPrompt: params.transcriptCommandBody,
+                    prompt: selectedModelResult?.prompt ?? params.commandBody,
+                    transcriptPrompt:
+                      selectedModelResult?.transcriptPrompt ?? params.transcriptCommandBody,
                     userTurnTranscriptRecorder,
                     currentInboundEventKind: params.followupRun.currentInboundEventKind,
                     currentInboundContext: params.followupRun.currentInboundContext,

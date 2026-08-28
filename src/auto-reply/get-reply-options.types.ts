@@ -14,10 +14,16 @@ export type BlockReplyContext = {
 };
 
 /** Context passed to onModelSelected callback with actual model used. */
-type ModelSelectedContext = {
+export type ModelSelectedContext = {
   provider: string;
   model: string;
   thinkLevel: string | undefined;
+  input?: string[];
+};
+
+export type ModelSelectedResult = {
+  prompt?: string;
+  transcriptPrompt?: string;
 };
 
 /** Typing indicator class for channel-owned UX policy. */
@@ -240,7 +246,9 @@ export type GetReplyOptions = {
   onCompactionEnd?: () => Promise<void> | void;
   /** Called when the actual model is selected (including after fallback).
    * Use this to get model/provider/thinkLevel for responsePrefix template interpolation. */
-  onModelSelected?: (ctx: ModelSelectedContext) => void;
+  onModelSelected?: (
+    ctx: ModelSelectedContext,
+  ) => ModelSelectedResult | Promise<ModelSelectedResult | void> | void;
   /**
    * Controls whether normal assistant replies are automatically delivered to
    * the source conversation. `message_tool_only` prefers message-tool visible

@@ -1,6 +1,7 @@
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 
 export type AudioDeliveryMode = "auto" | "native" | "transcript";
+export type AudioDelivery = "native" | "transcript";
 
 export function resolveAudioDeliveryMode(cfg: OpenClawConfig): AudioDeliveryMode {
   const mode = cfg.tools?.media?.audio?.delivery;
@@ -10,6 +11,12 @@ export function resolveAudioDeliveryMode(cfg: OpenClawConfig): AudioDeliveryMode
   return "auto";
 }
 
-export function shouldAttachNativeAudio(mode: AudioDeliveryMode): boolean {
-  return mode === "native" || mode === "auto";
+export function resolveAudioDelivery(params: {
+  mode: AudioDeliveryMode;
+  supportsAudio: boolean;
+}): AudioDelivery {
+  if (params.mode === "transcript") {
+    return "transcript";
+  }
+  return params.supportsAudio ? "native" : "transcript";
 }

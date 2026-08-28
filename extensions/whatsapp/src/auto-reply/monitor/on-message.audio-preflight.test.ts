@@ -234,10 +234,11 @@ describe("createWebOnMessageHandler audio preflight", () => {
 
     await handler(makeAudioMsg());
 
-    expect(events).toEqual(["ack", "stt"]);
+    expect(events).toEqual(["ack"]);
     expect(processMessageMock).toHaveBeenCalledTimes(1);
     const processParams = mockObjectArg(processMessageMock, "processMessage");
-    expect(processParams.preflightAudioTranscript).toBe("transcribed voice note");
+    expect(processParams.preflightAudioTranscript).toBeUndefined();
+    expect(processParams.getAudioTranscript).toEqual(expect.any(Function));
     expect(processParams.ackAlreadySent).toBe(true);
     expect(processParams.ackReaction).toBe(ackReactionHandle);
   });
@@ -256,12 +257,13 @@ describe("createWebOnMessageHandler audio preflight", () => {
 
     await handler(makeAudioMsg());
 
-    expect(events).toEqual(["status-queued", "stt"]);
+    expect(events).toEqual(["status-queued"]);
     expect(maybeSendAckReactionMock).not.toHaveBeenCalled();
     expect(createStatusReactionControllerMock).toHaveBeenCalledTimes(1);
     expect(processMessageMock).toHaveBeenCalledTimes(1);
     const processParams = mockObjectArg(processMessageMock, "processMessage");
-    expect(processParams.preflightAudioTranscript).toBe("transcribed voice note");
+    expect(processParams.preflightAudioTranscript).toBeUndefined();
+    expect(processParams.getAudioTranscript).toEqual(expect.any(Function));
     expect(processParams.statusReactionController).toBe(statusReactionController);
     expect(processParams.ackAlreadySent).toBeUndefined();
   });
@@ -296,7 +298,7 @@ describe("createWebOnMessageHandler audio preflight", () => {
   it("shares one transcript for legacy direct broadcasts without explicit access proof", async () => {
     maybeBroadcastMessageMock.mockImplementation(
       async (params: { preflightAudioTranscript?: string | null }) => {
-        expect(params.preflightAudioTranscript).toBe("transcribed voice note");
+        expect(params.preflightAudioTranscript).toBeUndefined();
         return true;
       },
     );
@@ -315,8 +317,8 @@ describe("createWebOnMessageHandler audio preflight", () => {
 
     await handler(makeLegacyAudioMsg());
 
-    expect(events).toStrictEqual(["stt"]);
-    expect(transcribeFirstAudioMock).toHaveBeenCalledTimes(1);
+    expect(events).toStrictEqual([]);
+    expect(transcribeFirstAudioMock).not.toHaveBeenCalled();
     expect(maybeSendAckReactionMock).not.toHaveBeenCalled();
     expect(processMessageMock).not.toHaveBeenCalled();
   });
@@ -328,7 +330,7 @@ describe("createWebOnMessageHandler audio preflight", () => {
         ackReaction?: unknown;
         preflightAudioTranscript?: string | null;
       }) => {
-        expect(params.preflightAudioTranscript).toBe("transcribed voice note");
+        expect(params.preflightAudioTranscript).toBeUndefined();
         expect(params.ackAlreadySent).toBeUndefined();
         expect(params.ackReaction).toBeUndefined();
         return true;
@@ -349,14 +351,14 @@ describe("createWebOnMessageHandler audio preflight", () => {
 
     await handler(makeGroupAudioMsg());
 
-    expect(events).toEqual(["ack", "stt"]);
+    expect(events).toEqual(["ack"]);
     expect(processMessageMock).not.toHaveBeenCalled();
   });
 
   it("clears preflight status reaction before group broadcast voice fan-out", async () => {
     maybeBroadcastMessageMock.mockImplementation(
       async (params: { preflightAudioTranscript?: string | null }) => {
-        expect(params.preflightAudioTranscript).toBe("transcribed voice note");
+        expect(params.preflightAudioTranscript).toBeUndefined();
         expect(statusReactionController.cancelPending).toHaveBeenCalledTimes(1);
         expect(statusReactionController.clear).toHaveBeenCalledTimes(1);
         return true;
@@ -378,7 +380,7 @@ describe("createWebOnMessageHandler audio preflight", () => {
 
     await handler(makeGroupAudioMsg());
 
-    expect(events).toEqual(["status-queued", "stt"]);
+    expect(events).toEqual(["status-queued"]);
     expect(maybeSendAckReactionMock).not.toHaveBeenCalled();
     expect(statusReactionController.setQueued).toHaveBeenCalledTimes(1);
     expect(statusReactionController.cancelPending).toHaveBeenCalledTimes(1);
@@ -464,6 +466,8 @@ describe("createWebOnMessageHandler audio preflight", () => {
 
     await handler(makeAudioMsg());
 
+    const processParams = mockObjectArg(processMessageMock, "processMessage");
+    await (processParams.getAudioTranscript as () => Promise<unknown>)();
     expect(capturedCtx).toEqual({
       MediaPaths: ["/tmp/voice.ogg"],
       MediaTypes: ["audio/ogg; codecs=opus"],

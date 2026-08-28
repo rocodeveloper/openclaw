@@ -5,6 +5,9 @@ import { createTestWebAudioInboundMessage } from "../../inbound/test-message.tes
 // Mock the lazy-loaded audio preflight runtime boundary
 const transcribeFirstAudioMock = vi.fn();
 const maybeSendAckReactionMock = vi.fn();
+const onModelSelectedMock = vi.fn();
+let dispatchModelInput: string[] = ["text"];
+let selectedModelResult: { prompt?: string } | undefined;
 
 vi.mock("./audio-preflight.runtime.js", () => ({
   transcribeFirstAudio: (...args: unknown[]) => transcribeFirstAudioMock(...args),
@@ -66,7 +69,7 @@ vi.mock("./message-line.js", () => ({
 
 vi.mock("./runtime-api.js", () => ({
   buildHistoryContextFromEntries: (_p: { currentMessage: string }) => _p.currentMessage,
-  createChannelMessageReplyPipeline: () => ({ onModelSelected: undefined }),
+  createChannelMessageReplyPipeline: () => ({ onModelSelected: onModelSelectedMock }),
   formatInboundEnvelope: (p: { body: string }) => p.body,
   isControlCommandMessage: () => false,
   logVerbose: () => {},
@@ -110,7 +113,17 @@ vi.mock("./inbound-dispatch.js", () => ({
     RawBody: params.rawBody ?? params.msg.payload.body,
     Transcript: params.transcript,
   }),
-  dispatchWhatsAppBufferedReply: vi.fn(async () => true),
+  dispatchWhatsAppBufferedReply: vi.fn(
+    async (params: { onModelSelected?: (ctx: unknown) => unknown }) => {
+      selectedModelResult = (await params.onModelSelected?.({
+        provider: "test",
+        model: "test",
+        thinkLevel: undefined,
+        input: dispatchModelInput,
+      })) as { prompt?: string } | undefined;
+      return true;
+    },
+  ),
   resolveWhatsAppDmRouteTarget: () => "+15550000002",
   resolveWhatsAppResponsePrefix: () => undefined,
   updateWhatsAppMainLastRoute: () => {},
@@ -248,6 +261,9 @@ describe("processMessage audio preflight transcription", () => {
     maybeSendAckReactionMock.mockResolvedValue(null);
     shouldComputeCommandResult = false;
     shouldComputeCommandBodies = [];
+    onModelSelectedMock.mockReset();
+    dispatchModelInput = ["text"];
+    selectedModelResult = undefined;
     vi.mocked(dispatchWhatsAppBufferedReply).mockClear();
   });
 
@@ -271,12 +287,10 @@ describe("processMessage audio preflight transcription", () => {
 
     const context = firstDispatchContext();
     expectContextFields(context, {
-      Body: "okay let's test this voice message",
-      BodyForAgent: "okay let's test this voice message",
+      Body: "<media:audio>",
+      BodyForAgent: "<media:audio>",
       CommandBody: "<media:audio>",
       RawBody: "<media:audio>",
-      Transcript: "okay let's test this voice message",
-      MediaTranscribedIndexes: [0],
     });
     // mediaPath and mediaType must be preserved so inboundAudio detection (used by
     // features like messages.tts.auto: "inbound") still recognises this as audio.
@@ -353,12 +367,10 @@ describe("processMessage audio preflight transcription", () => {
     expect(shouldComputeCommandBodies).toEqual(["<media:audio>"]);
 
     expectContextFields(firstDispatchContext(), {
-      Body: "/new start a new session",
-      BodyForAgent: "/new start a new session",
+      Body: "<media:audio>",
+      BodyForAgent: "<media:audio>",
       CommandBody: "<media:audio>",
       RawBody: "<media:audio>",
-      Transcript: "/new start a new session",
-      MediaTranscribedIndexes: [0],
     });
   });
 
@@ -454,5 +466,68 @@ describe("processMessage audio preflight transcription", () => {
     expectContextFields(firstDispatchContext(), {
       Body: "<media:audio>",
     });
+  });
+
+  it.each([
+    ["auto", ["audio"], "<media:audio>\n/tmp/voice.ogg"],
+    ["auto", ["text"], "spoken words"],
+    ["native", ["audio"], "<media:audio>\n/tmp/voice.ogg"],
+    ["native", ["text"], "spoken words"],
+    ["transcript", ["audio"], "spoken words"],
+  ] as const)("passes one %s representation for model input %j", async (mode, input, expected) => {
+    dispatchModelInput = input;
+    await processMessage({
+      ...makeParams(),
+      cfg: {
+        tools: { media: { audio: { enabled: true, delivery: mode } } },
+        channels: { whatsapp: {} },
+        commands: { useAccessGroups: false },
+      } as never,
+      preflightAudioTranscript: "spoken words",
+    });
+    expect(selectedModelResult?.prompt).toBe(expected);
+  });
+
+  it.each([
+    ["auto", ["audio"], 0],
+    ["auto", ["text"], 1],
+    ["native", ["audio"], 0],
+    ["native", ["text"], 1],
+    ["transcript", ["audio"], 1],
+  ] as const)(
+    "transcribes %s audio for model input %j exactly %i times",
+    async (mode, input, calls) => {
+      dispatchModelInput = input;
+      transcribeFirstAudioMock.mockResolvedValueOnce("spoken words");
+      await processMessage({
+        ...makeParams(),
+        cfg: {
+          tools: { media: { audio: { enabled: true, delivery: mode } } },
+          channels: { whatsapp: {} },
+          commands: { useAccessGroups: false },
+        } as never,
+      });
+
+      expect(transcribeFirstAudioMock).toHaveBeenCalledTimes(calls);
+      expect(selectedModelResult?.prompt).toBe(
+        calls === 0 ? "<media:audio>\n/tmp/voice.ogg" : "spoken words",
+      );
+    },
+  );
+
+  it("reuses one transcript across unsupported fallback selections", async () => {
+    dispatchModelInput = ["text"];
+    transcribeFirstAudioMock.mockResolvedValueOnce("spoken words");
+    await processMessage(makeParams());
+
+    const dispatch = vi.mocked(dispatchWhatsAppBufferedReply).mock.calls[0]?.[0];
+    await dispatch?.onModelSelected?.({
+      provider: "test-fallback",
+      model: "fallback",
+      thinkLevel: undefined,
+      input: ["text"],
+    });
+
+    expect(transcribeFirstAudioMock).toHaveBeenCalledTimes(1);
   });
 });

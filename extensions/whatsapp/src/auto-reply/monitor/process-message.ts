@@ -38,12 +38,13 @@ import { whatsappInboundLog } from "../loggers.js";
 import { buildMentionConfig } from "../mentions.js";
 import { elide } from "../util.js";
 import { maybeSendAckReaction } from "./ack-reaction.js";
+import { resolveAudioDelivery, resolveAudioDeliveryMode } from "./audio-delivery.js";
+import { stripMentionsForCommand } from "./commands.js";
 import {
   resolveVisibleWhatsAppGroupHistory,
   resolveVisibleWhatsAppReplyContext,
   type GroupHistoryEntry,
 } from "./inbound-context.js";
-import { stripMentionsForCommand } from "./commands.js";
 import {
   buildWhatsAppInboundContext,
   dispatchWhatsAppBufferedReply,
@@ -75,7 +76,6 @@ import {
   createWhatsAppStatusReactionController,
   type StatusReactionController,
 } from "./status-reaction.js";
-import { resolveAudioDeliveryMode, shouldAttachNativeAudio } from "./audio-delivery.js";
 
 const WHATSAPP_MESSAGE_RECEIVED_HOOK_LIMITS = {
   maxConcurrency: 8,
@@ -216,12 +216,8 @@ export async function processMessage(params: {
   ackAlreadySent?: boolean;
   ackReaction?: AckReactionHandle | null;
   statusReactionController?: StatusReactionController | null;
-  /** Pre-computed audio transcript from a caller-level preflight, used to avoid
-   * re-transcribing the same voice note once per broadcast agent.
-   * - string  → transcript obtained; use it directly, skip internal STT
-   * - null    → preflight was attempted but failed / returned nothing; skip internal STT
-   * - undefined (omitted) → caller did not attempt preflight; run internal STT as normal */
   preflightAudioTranscript?: string | null;
+  getAudioTranscript?: () => Promise<string | null>;
 }) {
   const admission = requireWhatsAppInboundAdmission(params.msg);
   if (admission.ingress.admission !== "dispatch" && admission.ingress.admission !== "observe") {
@@ -246,54 +242,54 @@ export async function processMessage(params: {
     agentId: params.route.agentId,
     sessionKey: params.route.sessionKey,
   });
-  // Preflight audio transcription: transcribe voice notes before building the
-  // inbound context so the agent receives the transcript instead of <media:audio>.
-  // Mirrors the preflight step added for Telegram in #61008.
-  // When the caller already performed transcription (e.g. on-message.ts before
-  // broadcast fan-out) the pre-computed result is reused to avoid N STT calls
-  // for N broadcast agents on the same voice note.
-  // preflightAudioTranscript semantics:
-  //   string    → transcript ready, use it
-  //   null      → caller attempted but got nothing; skip internal STT to avoid retry
-  //   undefined → caller did not attempt; run internal STT
   let audioTranscript: string | undefined = params.preflightAudioTranscript ?? undefined;
   const hasAudioBody =
     params.msg.payload.media?.type?.startsWith("audio/") === true &&
     params.msg.payload.body === "<media:audio>";
-  if (
-    params.preflightAudioTranscript === undefined &&
-    hasAudioBody &&
-    params.msg.payload.media?.path
-  ) {
-    try {
-      const { transcribeFirstAudio } = await import("./audio-preflight.runtime.js");
-      audioTranscript = await transcribeFirstAudio({
-        ctx: {
-          MediaPaths: [params.msg.payload.media?.path],
-          MediaTypes: params.msg.payload.media?.type ? [params.msg.payload.media?.type] : undefined,
-          From: conversationId,
-          To: params.msg.platform.recipientJid,
-          Provider: "whatsapp",
-          Surface: "whatsapp",
-          OriginatingChannel: "whatsapp",
-          OriginatingTo: conversationId,
-          AccountId: params.route.accountId,
-        },
-        cfg: params.cfg,
-      });
-    } catch {
-      // Transcription failure is non-fatal: fall back to <media:audio> placeholder.
-      if (shouldLogVerbose()) {
-        logVerbose("whatsapp: audio preflight transcription failed, using placeholder");
-      }
-    }
-  }
+  let audioTranscriptPromise: Promise<string | null> | undefined;
+  const getAudioTranscript = params.getAudioTranscript
+    ? params.getAudioTranscript
+    : async () => {
+        if (params.preflightAudioTranscript !== undefined) {
+          return params.preflightAudioTranscript;
+        }
+        if (audioTranscriptPromise) {
+          return audioTranscriptPromise;
+        }
+        audioTranscriptPromise = (async () => {
+          if (!hasAudioBody || !params.msg.payload.media?.path) {
+            return null;
+          }
+          try {
+            const { transcribeFirstAudio } = await import("./audio-preflight.runtime.js");
+            return (
+              (await transcribeFirstAudio({
+                ctx: {
+                  MediaPaths: [params.msg.payload.media.path],
+                  MediaTypes: params.msg.payload.media.type
+                    ? [params.msg.payload.media.type]
+                    : undefined,
+                  From: conversationId,
+                  To: params.msg.platform.recipientJid,
+                  Provider: "whatsapp",
+                  Surface: "whatsapp",
+                  OriginatingChannel: "whatsapp",
+                  OriginatingTo: conversationId,
+                  AccountId: params.route.accountId,
+                },
+                cfg: params.cfg,
+              })) ?? null
+            );
+          } catch {
+            if (shouldLogVerbose()) {
+              logVerbose("whatsapp: audio preflight transcription failed, using placeholder");
+            }
+            return null;
+          }
+        })();
+        return audioTranscriptPromise;
+      };
 
-  // If we have a transcript, replace the agent-facing body so the agent sees the spoken text.
-  // mediaPath and mediaType are intentionally preserved so that inboundAudio detection
-  // (used by features such as messages.tts.auto: "inbound") still sees this as an
-  // audio message. The transcript and transcribed media index are also stored on
-  // context so downstream media understanding does not transcribe it again.
   const msgForAgent: AdmittedWebInboundMessage =
     audioTranscript !== undefined
       ? { ...params.msg, payload: { ...params.msg.payload, body: audioTranscript } }
@@ -306,15 +302,6 @@ export async function processMessage(params: {
     groupAllowFrom: inboundPolicy.groupAllowFrom,
   });
 
-  let combinedBody = buildInboundLine({
-    cfg: params.cfg,
-    msg: msgForAgent,
-    agentId: params.route.agentId,
-    previousTimestamp,
-    envelope: envelopeOptions,
-    visibleReplyTo,
-  });
-  let shouldClearGroupHistory = false;
   const visibleGroupHistory =
     conversationKind === "group"
       ? resolveVisibleWhatsAppGroupHistory({
@@ -325,18 +312,24 @@ export async function processMessage(params: {
           authDir: account.authDir,
         })
       : undefined;
-
-  if (conversationKind === "group") {
-    const history = visibleGroupHistory ?? [];
-    if (history.length > 0) {
-      const historyEntries: HistoryEntry[] = history.map((m) => ({
-        sender: m.sender,
-        body: m.body,
-        timestamp: m.timestamp,
-      }));
-      combinedBody = buildHistoryContextFromEntries({
+  const historyEntries: HistoryEntry[] = (visibleGroupHistory ?? []).map((m) => ({
+    sender: m.sender,
+    body: m.body,
+    timestamp: m.timestamp,
+  }));
+  const buildCombinedBody = (msg: AdmittedWebInboundMessage) => {
+    let body = buildInboundLine({
+      cfg: params.cfg,
+      msg,
+      agentId: params.route.agentId,
+      previousTimestamp,
+      envelope: envelopeOptions,
+      visibleReplyTo,
+    });
+    if (conversationKind === "group" && historyEntries.length > 0) {
+      body = buildHistoryContextFromEntries({
         entries: historyEntries,
-        currentMessage: combinedBody,
+        currentMessage: body,
         excludeLast: false,
         formatEntry: (entry) => {
           return formatInboundEnvelope({
@@ -351,20 +344,19 @@ export async function processMessage(params: {
         },
       });
     }
+    return body;
+  };
+  let combinedBody = buildCombinedBody(msgForAgent);
+  const nativeCombinedBody = buildCombinedBody(params.msg);
+  let shouldClearGroupHistory = false;
+
+  if (conversationKind === "group") {
     shouldClearGroupHistory = !(params.suppressGroupHistoryClear ?? false);
   }
 
-  // Keep the path in the prompt because detectAndLoadPromptImages loads native audio from prompt references.
   const audioMediaPath = params.msg.payload.media?.path;
   const hasAudioAttachment =
     params.msg.payload.media?.type?.startsWith("audio/") === true && Boolean(audioMediaPath);
-  if (
-    hasAudioAttachment &&
-    audioMediaPath &&
-    shouldAttachNativeAudio(resolveAudioDeliveryMode(params.cfg))
-  ) {
-    combinedBody = `${combinedBody}\n${audioMediaPath}`;
-  }
 
   // Echo detection uses combined body so we don't respond twice.
   const combinedEchoKey = params.buildCombinedEchoKey({
@@ -484,6 +476,31 @@ export async function processMessage(params: {
     channel: "whatsapp",
     accountId: params.route.accountId,
   });
+  const audioMode = resolveAudioDeliveryMode(params.cfg);
+  const selectedModelCallback = async (
+    selection: Parameters<NonNullable<typeof onModelSelected>>[0],
+  ) => {
+    onModelSelected?.(selection);
+    if (!hasAudioAttachment || !audioMediaPath) {
+      return;
+    }
+    const delivery = resolveAudioDelivery({
+      mode: audioMode,
+      supportsAudio: selection.input?.includes("audio") === true,
+    });
+    if (delivery === "native") {
+      return { prompt: `${nativeCombinedBody}\n${audioMediaPath}`, transcriptPrompt: combinedBody };
+    }
+    audioTranscript = audioTranscript ?? (await getAudioTranscript());
+    const transcriptBody =
+      audioTranscript !== null && audioTranscript !== undefined
+        ? buildCombinedBody({
+            ...params.msg,
+            payload: { ...params.msg.payload, body: audioTranscript },
+          })
+        : combinedBody;
+    return { prompt: transcriptBody, transcriptPrompt: transcriptBody };
+  };
   const responsePrefix = resolveWhatsAppResponsePrefix({
     cfg: params.cfg,
     agentId: params.route.agentId,
@@ -617,7 +634,7 @@ export async function processMessage(params: {
             maxMediaBytes: params.maxMediaBytes,
             maxMediaTextChunkLimit: params.maxMediaTextChunkLimit,
             msg: params.msg,
-            onModelSelected,
+            onModelSelected: selectedModelCallback,
             rememberSentText: params.rememberSentText,
             replyLogger: params.replyLogger,
             replyPipeline: {

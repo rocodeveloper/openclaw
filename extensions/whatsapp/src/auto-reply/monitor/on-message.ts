@@ -26,7 +26,6 @@ import { normalizeE164 } from "../../text-runtime.js";
 import { buildMentionConfig } from "../mentions.js";
 import type { MentionConfig } from "../mentions.js";
 import { maybeSendAckReaction } from "./ack-reaction.js";
-import { resolveAudioDeliveryMode } from "./audio-delivery.js";
 import { maybeBroadcastMessage } from "./broadcast.js";
 import type { EchoTracker } from "./echo.js";
 import {
@@ -104,6 +103,7 @@ export function createWebOnMessageHandler(params: {
       ackAlreadySent?: boolean;
       ackReaction?: AckReactionHandle | null;
       statusReactionController?: StatusReactionController | null;
+      getAudioTranscript?: () => Promise<string | null>;
     },
   ) => {
     const processParams: Parameters<typeof processMessage>[0] = {
@@ -141,6 +141,9 @@ export function createWebOnMessageHandler(params: {
     }
     if (opts?.statusReactionController !== undefined) {
       processParams.statusReactionController = opts.statusReactionController;
+    }
+    if (opts?.getAudioTranscript !== undefined) {
+      processParams.getAudioTranscript = opts.getAudioTranscript;
     }
     return processMessage(processParams);
   };
@@ -243,34 +246,43 @@ export function createWebOnMessageHandler(params: {
         );
       }
     };
-    const transcribeAudioOnce = async () => {
-      if (preflightAudioTranscript !== undefined || !hasAudioBody || !msg.payload.media?.path) {
-        return;
+    let audioTranscriptPromise: Promise<string | null> | undefined;
+    const transcribeAudioOnce = async (): Promise<string | null> => {
+      if (preflightAudioTranscript !== undefined) {
+        return preflightAudioTranscript;
       }
-      try {
-        const { transcribeFirstAudio } = await import("./audio-preflight.runtime.js");
-        // transcribeFirstAudio returns undefined on failure/disabled; store null so
-        // processMessage knows the attempt was already made and does not retry.
-        preflightAudioTranscript =
-          (await transcribeFirstAudio({
-            ctx: {
-              MediaPaths: [msg.payload.media?.path],
-              MediaTypes: msg.payload.media?.type ? [msg.payload.media?.type] : undefined,
-              From: conversationId,
-              To: msg.platform.recipientJid,
-              Provider: "whatsapp",
-              Surface: "whatsapp",
-              OriginatingChannel: "whatsapp",
-              OriginatingTo: conversationId,
-              AccountId: route.accountId,
-            },
-            cfg,
-          })) ?? null;
-      } catch {
-        // Non-fatal: store null so per-agent retries are suppressed.
-        preflightAudioTranscript = null;
+      if (!audioTranscriptPromise) {
+        audioTranscriptPromise = (async () => {
+          if (!hasAudioBody || !msg.payload.media?.path) {
+            return null;
+          }
+          try {
+            const { transcribeFirstAudio } = await import("./audio-preflight.runtime.js");
+            return (
+              (await transcribeFirstAudio({
+                ctx: {
+                  MediaPaths: [msg.payload.media.path],
+                  MediaTypes: msg.payload.media.type ? [msg.payload.media.type] : undefined,
+                  From: conversationId,
+                  To: msg.platform.recipientJid,
+                  Provider: "whatsapp",
+                  Surface: "whatsapp",
+                  OriginatingChannel: "whatsapp",
+                  OriginatingTo: conversationId,
+                  AccountId: route.accountId,
+                },
+                cfg,
+              })) ?? null
+            );
+          } catch {
+            return null;
+          }
+        })();
       }
+      preflightAudioTranscript = await audioTranscriptPromise;
+      return preflightAudioTranscript;
     };
+    const getAudioTranscript = () => transcribeAudioOnce();
     const runAudioPreflightOnce = async () => {
       if (
         preflightAudioTranscript !== undefined ||
@@ -303,11 +315,6 @@ export function createWebOnMessageHandler(params: {
         });
         ackAlreadySent = ackReaction !== null;
       }
-      if (resolveAudioDeliveryMode(cfg) === "native") {
-        preflightAudioTranscript = null;
-        return;
-      }
-      await transcribeAudioOnce();
     };
 
     if (conversationKind === "group") {
@@ -367,12 +374,11 @@ export function createWebOnMessageHandler(params: {
         gating.needsMentionText === true
       ) {
         await runAudioPreflightOnce();
+        const transcript = await transcribeAudioOnce();
         gating = await applyGroupGating({
           cfg,
           msg,
-          ...(typeof preflightAudioTranscript === "string"
-            ? { mentionText: preflightAudioTranscript }
-            : {}),
+          ...(typeof transcript === "string" ? { mentionText: transcript } : {}),
           groupHistoryKey,
           agentId: route.agentId,
           sessionKey: route.sessionKey,
@@ -443,10 +449,6 @@ export function createWebOnMessageHandler(params: {
     if (hasBroadcastTargets && statusReactionController) {
       await clearPreDispatchReaction();
     }
-    if (hasBroadcastTargets && !canRunEarlyAudioPreflight) {
-      await transcribeAudioOnce();
-    }
-
     if (
       !configuredRoute.bindingResolution &&
       (await maybeBroadcastMessage({
@@ -465,7 +467,8 @@ export function createWebOnMessageHandler(params: {
         ...(statusReactionController && conversationKind !== "group"
           ? { ackAlreadySent: true }
           : {}),
-        processMessage: (m, r, k, opts) => processForRoute(cfg, m, r, k, opts),
+        processMessage: (m, r, k, opts) =>
+          processForRoute(cfg, m, r, k, { ...opts, getAudioTranscript }),
       }))
     ) {
       return;
@@ -474,6 +477,7 @@ export function createWebOnMessageHandler(params: {
     recordAcceptedConfiguredGroupRoute?.();
 
     await processForRoute(cfg, msg, route, groupHistoryKey, {
+      getAudioTranscript,
       ...(preflightAudioTranscript !== undefined ? { preflightAudioTranscript } : {}),
       ...(ackAlreadySent ? { ackAlreadySent: true } : {}),
       ...(ackReaction ? { ackReaction } : {}),
