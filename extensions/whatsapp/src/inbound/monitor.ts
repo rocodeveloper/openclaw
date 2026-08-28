@@ -9,6 +9,7 @@ import type {
   WAMessageKey,
   WASocket,
 } from "baileys";
+import { generateMessageIDV2 } from "baileys";
 import { recordChannelActivity } from "openclaw/plugin-sdk/channel-activity-runtime";
 import {
   formatInboundMediaUnavailableText,
@@ -682,14 +683,19 @@ export async function attachWebInboxToSocket(
     });
   };
   const trackLateAcceptedSend = (jid: string, promise: Promise<WAMessage | undefined>) => {
-    // The local send has failed terminally, but Baileys may still deliver it.
-    // Track a late message id only to suppress the resulting self-echo.
-    void promise.then(
+    let settled = false;
+    const outcome = promise.then(
       (result) => {
+        settled = true;
         rememberOutboundMessage(jid, result);
+        return { type: "accepted" as const, result };
       },
-      () => {},
+      (error: unknown) => {
+        settled = true;
+        return { type: "failed" as const, error };
+      },
     );
+    return { outcome, isSettled: () => settled };
   };
   let reachoutTimeLock: ReachoutTimelockState | undefined;
   let reachoutTimeLockFetch: Promise<ReachoutTimelockState | undefined> | undefined;
@@ -787,7 +793,22 @@ export async function attachWebInboxToSocket(
     sendOptions?: MiscMessageGenerationOptions,
   ) => {
     let lastErr: unknown = new Error(RECONNECT_IN_PROGRESS_ERROR);
+    const stableSendOptions =
+      sendOptions?.messageId !== undefined || shouldRetryDisconnect()
+        ? {
+            ...sendOptions,
+            messageId: sendOptions?.messageId ?? generateMessageIDV2(sock.user?.id),
+          }
+        : sendOptions;
+    let lateSend: ReturnType<typeof trackLateAcceptedSend> | undefined;
     for (let attempt = 1; ; attempt++) {
+      if (lateSend?.isSettled()) {
+        const outcome = await lateSend.outcome;
+        lateSend = undefined;
+        if (outcome.type === "accepted") {
+          return outcome.result;
+        }
+      }
       const currentSock = getCurrentSock();
       if (currentSock) {
         try {
@@ -800,7 +821,7 @@ export async function attachWebInboxToSocket(
                 trackLateAcceptedSend(timedOutJid, promise);
               },
             },
-          ).sendMessage(jid, content, sendOptions);
+          ).sendMessage(jid, content, stableSendOptions);
           let closedDuringSend = false;
           // Race the original socket close because Baileys can leave sendMessage pending after disconnect.
           const result = await (currentSock === sock
@@ -815,7 +836,7 @@ export async function attachWebInboxToSocket(
                 }),
               ]).catch((error: unknown) => {
                 if (closedDuringSend) {
-                  trackLateAcceptedSend(jid, sendPromise);
+                  lateSend = trackLateAcceptedSend(jid, sendPromise);
                 }
                 throw error;
               })
@@ -846,10 +867,29 @@ export async function attachWebInboxToSocket(
         options.verbose,
         `Waiting ${delayMs}ms for WhatsApp reconnect before retrying send to ${jid}: ${formatError(lastErr)}`,
       );
-      try {
-        await sleepWithAbort(delayMs, options.disconnectRetryAbortSignal);
-      } catch {
-        throw lastErr;
+      if (lateSend) {
+        const outcome = await Promise.race([
+          lateSend.outcome,
+          sleepWithAbort(delayMs, options.disconnectRetryAbortSignal).then(
+            () => ({ type: "delay" as const }),
+            () => ({ type: "aborted" as const }),
+          ),
+        ]);
+        if (outcome.type === "accepted") {
+          return outcome.result;
+        }
+        if (outcome.type === "aborted") {
+          throw lastErr;
+        }
+        if (outcome.type === "failed") {
+          lateSend = undefined;
+        }
+      } else {
+        try {
+          await sleepWithAbort(delayMs, options.disconnectRetryAbortSignal);
+        } catch {
+          throw lastErr;
+        }
       }
     }
   };
