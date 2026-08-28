@@ -1,6 +1,7 @@
 /** Config paths with user-facing metadata for audio understanding settings. */
 export const MEDIA_AUDIO_FIELD_KEYS = [
   "tools.media.audio.enabled",
+  "tools.media.audio.delivery",
   "tools.media.audio.maxBytes",
   "tools.media.audio.maxChars",
   "tools.media.audio.prompt",
@@ -31,6 +32,8 @@ type MediaAudioFieldKey = (typeof MEDIA_AUDIO_FIELD_KEYS)[number];
 export const MEDIA_AUDIO_FIELD_HELP: Record<MediaAudioFieldKey, string> = {
   "tools.media.audio.enabled":
     "Enable audio understanding so voice notes or audio clips can be transcribed/summarized for agent context. Disable when audio ingestion is outside policy or unnecessary for your workflows.",
+  "tools.media.audio.delivery":
+    'Select audio delivery mode: "auto" uses native audio for audio-capable models and transcription as fallback, "native" sends audio without transcription, and "transcript" always transcribes audio first. Default: "auto".',
   "tools.media.audio.maxBytes":
     "Maximum accepted audio payload size in bytes before processing is rejected or clipped by policy. Set this based on expected recording length and upstream provider limits.",
   "tools.media.audio.maxChars":
@@ -81,6 +84,7 @@ export const MEDIA_AUDIO_FIELD_HELP: Record<MediaAudioFieldKey, string> = {
 
 export const MEDIA_AUDIO_FIELD_LABELS: Record<MediaAudioFieldKey, string> = {
   "tools.media.audio.enabled": "Enable Audio Understanding",
+  "tools.media.audio.delivery": "Audio Understanding Delivery",
   "tools.media.audio.maxBytes": "Audio Understanding Max Bytes",
   "tools.media.audio.maxChars": "Audio Understanding Max Chars",
   "tools.media.audio.prompt": "Audio Understanding Prompt",

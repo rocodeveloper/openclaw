@@ -91,7 +91,6 @@ export type MediaUnderstandingModelConfig = MediaProviderRequestConfig & {
 export type MediaUnderstandingConfig = MediaProviderRequestConfig & {
   /** Enable media understanding when models are configured. */
   enabled?: boolean;
-  delivery?: "auto" | "native" | "transcript";
   /** Optional scope gating for understanding. */
   scope?: MediaUnderstandingScopeConfig;
   /** Default max bytes to send. */
@@ -122,6 +121,10 @@ export type MediaUnderstandingConfig = MediaProviderRequestConfig & {
    * Default: '📝 "{transcript}"'
    */
   echoFormat?: string;
+};
+
+export type MediaUnderstandingAudioConfig = MediaUnderstandingConfig & {
+  delivery?: "auto" | "native" | "transcript";
 };
 
 export type LinkModelConfig = {
@@ -161,7 +164,7 @@ export type MediaToolsConfig = {
     directSend?: boolean;
   };
   image?: MediaUnderstandingConfig;
-  audio?: MediaUnderstandingConfig;
+  audio?: MediaUnderstandingAudioConfig;
   video?: MediaUnderstandingConfig;
 };
 

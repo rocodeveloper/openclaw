@@ -1065,17 +1065,24 @@ const MediaUnderstandingModelSchema = z
   .strict()
   .optional();
 
-const ToolsMediaUnderstandingSchema = z
+const ToolsMediaUnderstandingShape = {
+  enabled: z.boolean().optional(),
+  scope: MediaUnderstandingScopeSchema,
+  maxBytes: z.number().int().positive().optional(),
+  maxChars: z.number().int().positive().optional(),
+  ...MediaUnderstandingRuntimeFields,
+  attachments: MediaUnderstandingAttachmentsSchema,
+  models: z.array(MediaUnderstandingModelSchema).optional(),
+  echoTranscript: z.boolean().optional(),
+  echoFormat: z.string().optional(),
+};
+
+const ToolsMediaUnderstandingSchema = z.object(ToolsMediaUnderstandingShape).strict().optional();
+
+const ToolsMediaUnderstandingAudioSchema = z
   .object({
-    enabled: z.boolean().optional(),
-    scope: MediaUnderstandingScopeSchema,
-    maxBytes: z.number().int().positive().optional(),
-    maxChars: z.number().int().positive().optional(),
-    ...MediaUnderstandingRuntimeFields,
-    attachments: MediaUnderstandingAttachmentsSchema,
-    models: z.array(MediaUnderstandingModelSchema).optional(),
-    echoTranscript: z.boolean().optional(),
-    echoFormat: z.string().optional(),
+    ...ToolsMediaUnderstandingShape,
+    delivery: z.union([z.literal("auto"), z.literal("native"), z.literal("transcript")]).optional(),
   })
   .strict()
   .optional();
@@ -1091,7 +1098,7 @@ export const ToolsMediaSchema = z
       .strict()
       .optional(),
     image: ToolsMediaUnderstandingSchema.optional(),
-    audio: ToolsMediaUnderstandingSchema.optional(),
+    audio: ToolsMediaUnderstandingAudioSchema,
     video: ToolsMediaUnderstandingSchema.optional(),
   })
   .strict()

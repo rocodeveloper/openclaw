@@ -422,6 +422,46 @@ describe("config schema regressions", () => {
 
     expect(res.ok).toBe(true);
   });
+
+  it.each(["auto", "native", "transcript"] as const)(
+    "accepts tools.media.audio.delivery=%s",
+    (delivery) => {
+      const res = validateConfigObject({
+        tools: {
+          media: {
+            audio: { delivery },
+          },
+        },
+      });
+
+      expect(res.ok).toBe(true);
+    },
+  );
+
+  it("rejects tools.media.audio.delivery values outside the stable contract", () => {
+    const res = validateConfigObject({
+      tools: {
+        media: {
+          audio: { delivery: "webhook" },
+        },
+      },
+    });
+
+    expect(res.ok).toBe(false);
+  });
+
+  it("does not expose audio delivery on image understanding", () => {
+    const res = validateConfigObject({
+      tools: {
+        media: {
+          image: { delivery: "native" },
+        },
+      },
+    });
+
+    expect(res.ok).toBe(false);
+  });
+
   it("accepts discovery.wideArea.domain for unicast DNS-SD", () => {
     const res = validateConfigObject({
       discovery: {

@@ -194,6 +194,46 @@ describe("appendProviderCatalogRows", () => {
 });
 
 describe("appendConfiguredProviderRows", () => {
+  it("preserves configured audio input in model-list rows", async () => {
+    const rows: ModelRow[] = [];
+
+    await appendConfiguredProviderRows({
+      rows,
+      seenKeys: new Set(),
+      context: {
+        cfg: {
+          models: {
+            providers: {
+              google: {
+                api: "google-generative-ai",
+                baseUrl: "https://generativelanguage.googleapis.com",
+                models: [
+                  {
+                    id: "gemini-audio",
+                    name: "Gemini Audio",
+                    reasoning: false,
+                    input: ["text", "audio"],
+                    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+                    contextWindow: 32_000,
+                    maxTokens: 4096,
+                  },
+                ],
+              },
+            },
+          },
+        },
+        agentDir: "/tmp/openclaw-agent",
+        authIndex,
+        configuredByKey: new Map(),
+        discoveredKeys: new Set(),
+        filter: { provider: "google", local: false },
+        skipRuntimeModelSuppression: true,
+      },
+    });
+
+    expect(requireOnlyRow(rows).input).toBe("text+audio");
+  });
+
   it("keeps provider normalization for configured provider models", async () => {
     mocks.normalizeProviderResolvedModelWithPlugin.mockReturnValueOnce({
       provider: "anthropic",
