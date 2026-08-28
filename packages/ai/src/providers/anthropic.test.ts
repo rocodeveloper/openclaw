@@ -889,6 +889,40 @@ describe("Anthropic provider", () => {
     ]);
   });
 
+  it("replays unsupported audio as one text placeholder", async () => {
+    let capturedPayload: unknown;
+    const stream = streamAnthropic(
+      makeAnthropicModel(),
+      {
+        messages: [
+          {
+            role: "user",
+            content: [{ type: "audio", mimeType: "audio/mpeg", data: "YXVkaW8=" }],
+            timestamp: 0,
+          },
+        ],
+      } as unknown as Context,
+      {
+        apiKey: "sk-ant-provider",
+        onPayload: (payload) => {
+          capturedPayload = payload;
+          throw new Error("stop before network");
+        },
+      },
+    );
+
+    await stream.result();
+
+    expect(capturedPayload).toMatchObject({
+      messages: [
+        {
+          role: "user",
+          content: [{ type: "text", text: "(audio omitted: model does not support audio)" }],
+        },
+      ],
+    });
+  });
+
   it.each([
     ["empty", ""],
     ["whitespace-only", " \n\t "],

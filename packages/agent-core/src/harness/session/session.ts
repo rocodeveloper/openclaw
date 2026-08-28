@@ -1,5 +1,5 @@
 // Agent Core module implements session behavior.
-import type { ImageContent, TextContent } from "../../../../llm-core/src/index.js";
+import type { AudioContent, ImageContent, TextContent } from "../../../../llm-core/src/index.js";
 import type { AgentMessage } from "../../types.js";
 import {
   asAgentMessage,
@@ -223,7 +223,7 @@ export class Session<TMetadata extends SessionMetadata = SessionMetadata> {
   /** Append harness-specific content that can also be replayed into model context. */
   async appendCustomMessageEntry(
     customType: string,
-    content: string | (TextContent | ImageContent)[],
+    content: string | (TextContent | ImageContent | AudioContent)[],
     display: boolean,
     details?: unknown,
   ): Promise<string> {

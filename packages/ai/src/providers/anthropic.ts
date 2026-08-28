@@ -1471,6 +1471,12 @@ function convertMessages(
               text: sanitizeSurrogates(item.text),
             };
           }
+          if (item.type === "audio") {
+            return {
+              type: "text",
+              text: "(audio omitted: model does not support audio)",
+            };
+          }
           return {
             type: "image",
             source: {

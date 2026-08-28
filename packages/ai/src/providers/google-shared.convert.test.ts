@@ -152,6 +152,23 @@ describe("google-shared convertTools", () => {
 });
 
 describe("google-shared convertMessages", () => {
+  it("converts audio input to inline data", () => {
+    const model = { ...makeModel("gemini-1.5-pro"), input: ["text", "audio"] };
+    const contents = convertMessagesForTest(model, {
+      messages: [
+        {
+          role: "user",
+          content: [{ type: "audio", mimeType: "audio/mpeg", data: "YXVkaW8=" }],
+          timestamp: 0,
+        },
+      ],
+    } as unknown as Context);
+
+    expect(contents[0]?.parts).toEqual([
+      { inlineData: { mimeType: "audio/mpeg", data: "YXVkaW8=" } },
+    ]);
+  });
+
   function expectConsecutiveMessagesNotMerged(params: {
     modelId: string;
     first: string;

@@ -5,6 +5,7 @@ import type {
   ResponseFunctionCallOutputItemList,
   ResponseFunctionToolCall,
   ResponseInput,
+  ResponseInputAudio,
   ResponseInputItem,
   ResponseInputContent,
   ResponseInputImage,
@@ -90,6 +91,20 @@ type ResponsesInputTokensDetails = {
   cached_tokens?: number;
   cache_write_tokens?: number;
 };
+
+function resolveOpenAIAudioFormat(mimeType: string): "mp3" | "wav" | undefined {
+  switch (mimeType.split(";", 1)[0]?.trim().toLowerCase()) {
+    case "audio/mpeg":
+    case "audio/mp3":
+      return "mp3";
+    case "audio/wav":
+    case "audio/x-wav":
+    case "audio/wave":
+      return "wav";
+    default:
+      return undefined;
+  }
+}
 type AzureResponsesContentPartAddedEvent = Omit<ResponsesContentPartAddedEvent, "part"> & {
   part: AzureResponsesTextContentPart;
 };
@@ -314,27 +329,49 @@ export function convertResponsesMessages<TApi extends Api>(
           content: [{ type: "input_text", text: sanitizeSurrogates(msg.content) }],
         });
       } else {
-        const content: ResponseInputContent[] = msg.content.map((item): ResponseInputContent => {
+        let content: ResponseInputContent[] = [];
+        for (const item of msg.content) {
+          if (item.type === "audio") {
+            if (content.length > 0) {
+              messages.push({ type: "message", role: "user", content });
+              content = [];
+            }
+            const format = resolveOpenAIAudioFormat(item.mimeType);
+            if (format) {
+              messages.push({
+                type: "input_audio",
+                input_audio: { data: item.data, format },
+              } satisfies ResponseInputAudio);
+            } else {
+              messages.push({
+                type: "message",
+                role: "user",
+                content: [
+                  {
+                    type: "input_text",
+                    text: "(audio omitted: unsupported audio format)",
+                  } satisfies ResponseInputText,
+                ],
+              });
+            }
+            continue;
+          }
           if (item.type === "text") {
-            return {
+            content.push({
               type: "input_text",
               text: sanitizeSurrogates(item.text),
-            } satisfies ResponseInputText;
+            } satisfies ResponseInputText);
+          } else {
+            content.push({
+              type: "input_image",
+              detail: "auto",
+              image_url: `data:${item.mimeType};base64,${item.data}`,
+            } satisfies ResponseInputImage);
           }
-          return {
-            type: "input_image",
-            detail: "auto",
-            image_url: `data:${item.mimeType};base64,${item.data}`,
-          } satisfies ResponseInputImage;
-        });
-        if (content.length === 0) {
-          continue;
         }
-        messages.push({
-          type: "message",
-          role: "user",
-          content,
-        });
+        if (content.length > 0) {
+          messages.push({ type: "message", role: "user", content });
+        }
       }
     } else if (msg.role === "assistant") {
       const output: ResponseInput = [];

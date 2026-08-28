@@ -5,6 +5,7 @@ import type {
   ChatCompletionChunk,
   ChatCompletionContentPart,
   ChatCompletionContentPartImage,
+  ChatCompletionContentPartInputAudio,
   ChatCompletionContentPartText,
   ChatCompletionDeveloperMessageParam,
   ChatCompletionMessageParam,
@@ -1065,6 +1066,25 @@ export function convertMessages(
               return {
                 type: "text",
                 text: sanitizeSurrogates(item.text),
+              } satisfies ChatCompletionContentPartText;
+            }
+            if (item.type === "audio") {
+              const format = item.mimeType.split(";", 1)[0]?.trim().toLowerCase();
+              if (format === "audio/mpeg" || format === "audio/mp3") {
+                return {
+                  type: "input_audio",
+                  input_audio: { data: item.data, format: "mp3" },
+                } satisfies ChatCompletionContentPartInputAudio;
+              }
+              if (format === "audio/wav" || format === "audio/x-wav" || format === "audio/wave") {
+                return {
+                  type: "input_audio",
+                  input_audio: { data: item.data, format: "wav" },
+                } satisfies ChatCompletionContentPartInputAudio;
+              }
+              return {
+                type: "text",
+                text: "(audio omitted: unsupported audio format)",
               } satisfies ChatCompletionContentPartText;
             }
             return {

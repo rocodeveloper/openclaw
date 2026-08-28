@@ -25,6 +25,7 @@ export type {
   AssistantMessage,
   AssistantMessageEvent,
   AssistantMessageEventStreamContract,
+  AudioContent,
   CacheRetention,
   Context,
   ImageContent,

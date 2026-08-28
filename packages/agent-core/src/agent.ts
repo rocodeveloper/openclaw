@@ -1,5 +1,6 @@
 // Agent Core module implements agent behavior.
 import type {
+  AudioContent,
   ImageContent,
   Message,
   Model,
@@ -373,10 +374,10 @@ export class Agent {
 
   /** Start a new prompt from text, a single message, or a batch of messages. */
   async prompt(message: AgentMessage | AgentMessage[]): Promise<void>;
-  async prompt(input: string, images?: ImageContent[]): Promise<void>;
+  async prompt(input: string, images?: (ImageContent | AudioContent)[]): Promise<void>;
   async prompt(
     input: string | AgentMessage | AgentMessage[],
-    images?: ImageContent[],
+    images?: (ImageContent | AudioContent)[],
   ): Promise<void> {
     if (this.activeRun) {
       throw new Error(
@@ -419,7 +420,7 @@ export class Agent {
 
   private normalizePromptInput(
     input: string | AgentMessage | AgentMessage[],
-    images?: ImageContent[],
+    images?: (ImageContent | AudioContent)[],
   ): AgentMessage[] {
     if (Array.isArray(input)) {
       return input;
@@ -429,7 +430,9 @@ export class Agent {
       return [input];
     }
 
-    const content: Array<TextContent | ImageContent> = [{ type: "text", text: input }];
+    const content: Array<TextContent | ImageContent | AudioContent> = [
+      { type: "text", text: input },
+    ];
     if (images && images.length > 0) {
       content.push(...images);
     }

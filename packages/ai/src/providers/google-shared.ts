@@ -16,6 +16,7 @@ import { calculateCost, clampThinkingLevel } from "../model-utils.js";
 import type {
   Api,
   AssistantMessage,
+  AudioContent,
   Context,
   ImageContent,
   Model,
@@ -280,12 +281,14 @@ export function convertMessages<T extends GoogleApiType>(
     } else if (msg.role === "toolResult") {
       // Extract text and image content
       const textResult = extractToolResultText(msg.content);
-      const imageContent = model.input.includes("image")
-        ? msg.content.filter((c): c is ImageContent => c.type === "image")
-        : [];
+      const mediaContent = msg.content.filter(
+        (c): c is ImageContent | AudioContent =>
+          (c.type === "image" && model.input.includes("image")) ||
+          (c.type === "audio" && model.input.includes("audio")),
+      );
 
       const hasText = textResult.length > 0;
-      const hasImages = imageContent.length > 0;
+      const hasMedia = mediaContent.length > 0;
       const mediaPlaceholder = describeToolResultMediaPlaceholder(msg.content);
 
       // Gemini 3+ models support multimodal function responses with images nested inside
@@ -296,10 +299,10 @@ export function convertMessages<T extends GoogleApiType>(
       // Use "output" key for success, "error" key for errors as per SDK documentation
       const responseValue = hasText ? sanitizeSurrogates(textResult) : (mediaPlaceholder ?? "");
 
-      const imageParts: Part[] = imageContent.map((imageBlock) => ({
+      const mediaParts: Part[] = mediaContent.map((mediaBlock) => ({
         inlineData: {
-          mimeType: imageBlock.mimeType,
-          data: imageBlock.data,
+          mimeType: mediaBlock.mimeType,
+          data: mediaBlock.data,
         },
       }));
 
@@ -308,7 +311,7 @@ export function convertMessages<T extends GoogleApiType>(
         functionResponse: {
           name: msg.toolName,
           response: msg.isError ? { error: responseValue } : { output: responseValue },
-          ...(hasImages && modelSupportsMultimodalFunctionResponse && { parts: imageParts }),
+          ...(hasMedia && modelSupportsMultimodalFunctionResponse && { parts: mediaParts }),
           ...(includeId ? { id: msg.toolCallId } : {}),
         },
       };
@@ -325,10 +328,10 @@ export function convertMessages<T extends GoogleApiType>(
       }
 
       // For Gemini < 3, add images in a separate user message
-      if (hasImages && !modelSupportsMultimodalFunctionResponse) {
+      if (hasMedia && !modelSupportsMultimodalFunctionResponse) {
         pendingToolResultImageTurns.push({
           role: "user",
-          parts: [{ text: "Tool result image:" }, ...imageParts],
+          parts: [{ text: "Tool result image:" }, ...mediaParts],
         });
       }
     }

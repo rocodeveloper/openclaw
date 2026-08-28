@@ -626,6 +626,38 @@ describe("OpenAI-compatible completions params", () => {
     });
   });
 
+  it("converts supported audio input without using an image part", async () => {
+    let capturedMessages: unknown;
+    const stream = streamOpenAICompletions(
+      { ...model, input: ["text", "audio"] },
+      {
+        messages: [
+          {
+            role: "user",
+            content: [{ type: "audio", mimeType: "audio/mpeg", data: "YXVkaW8=" }],
+            timestamp: 0,
+          },
+        ],
+      } as unknown as Context,
+      {
+        apiKey: "sk-test",
+        onPayload(payload) {
+          capturedMessages = (payload as { messages?: unknown }).messages;
+          throw new Error("stop before network");
+        },
+      },
+    );
+
+    await stream.result();
+
+    expect(capturedMessages).toEqual([
+      {
+        role: "user",
+        content: [{ type: "input_audio", input_audio: { data: "YXVkaW8=", format: "mp3" } }],
+      },
+    ]);
+  });
+
   it("does not reread an unreadable tool inventory length", async () => {
     let capturedPayload: Record<string, unknown> | undefined;
     const tools = new Proxy([], {

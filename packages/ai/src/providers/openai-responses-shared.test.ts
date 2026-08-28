@@ -324,6 +324,32 @@ describe("Responses reasoning effort", () => {
 describe("convertResponsesMessages", () => {
   const allowedToolCallProviders = testAllowedToolCallProviders;
 
+  it("converts supported audio input to an input_audio item", () => {
+    const model = {
+      ...nativeOpenAIModel,
+      input: ["text", "audio"],
+    } satisfies Model<"openai-responses">;
+    const input = convertResponsesMessages(
+      model,
+      {
+        messages: [
+          {
+            role: "user",
+            content: [{ type: "audio", mimeType: "audio/mpeg", data: "YXVkaW8=" }],
+            timestamp: 0,
+          },
+        ],
+      } as unknown as Context,
+      allowedToolCallProviders,
+    );
+
+    expect(input).toContainEqual({
+      type: "input_audio",
+      input_audio: { data: "YXVkaW8=", format: "mp3" },
+    });
+    expect(input).not.toContainEqual(expect.objectContaining({ type: "input_image" }));
+  });
+
   it("adds explicit message item types for system and user input items", () => {
     const input = convertResponsesMessages(
       nativeOpenAIModel,

@@ -404,4 +404,31 @@ describe("Mistral provider", () => {
     expect(textBlock?.text).toEqual(expect.stringContaining('{"type":"resource_link"'));
     expect(textBlock?.text).not.toContain("(no tool output)");
   });
+
+  it("replays audio as text without using an image part", async () => {
+    const stream = streamMistral(
+      { ...makeMistralModel(), input: ["text", "audio"] },
+      {
+        messages: [
+          {
+            role: "user",
+            content: [{ type: "audio", mimeType: "audio/mpeg", data: "YXVkaW8=" }],
+            timestamp: 0,
+          },
+        ],
+      } as unknown as Context,
+      { apiKey: "sk-mistral-provider" },
+    );
+
+    await stream.result();
+
+    expect(mistralMockState.payloads[0]).toMatchObject({
+      messages: [
+        {
+          role: "user",
+          content: [{ type: "text", text: "(audio omitted: model does not support audio)" }],
+        },
+      ],
+    });
+  });
 });

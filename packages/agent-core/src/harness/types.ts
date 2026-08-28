@@ -1,6 +1,7 @@
 // Agent Core type module defines shared TypeScript contracts.
 import type {
   ImageContent,
+  AudioContent,
   Model,
   SimpleStreamOptions,
   StreamFn,
@@ -412,7 +413,7 @@ export interface CustomEntry<T = unknown> extends SessionTreeEntryBase {
 export interface CustomMessageEntry<T = unknown> extends SessionTreeEntryBase {
   type: "custom_message";
   customType: string;
-  content: string | (TextContent | ImageContent)[];
+  content: string | (TextContent | ImageContent | AudioContent)[];
   details?: T;
   display: boolean;
 }
@@ -526,6 +527,7 @@ export interface BeforeAgentStartEvent<
   type: "before_agent_start";
   prompt: string;
   images?: ImageContent[];
+  audio?: AudioContent[];
   systemPrompt: string;
   resources: AgentHarnessResources<TSkill, TPromptTemplate>;
 }

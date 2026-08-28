@@ -247,6 +247,12 @@ export interface ImageContent {
   mimeType: string; // e.g., "image/jpeg", "image/png"
 }
 
+export interface AudioContent {
+  type: "audio";
+  data: string;
+  mimeType: string;
+}
+
 /** Normalized assistant tool call emitted by providers or repaired from text. */
 export interface ToolCall {
   type: "toolCall";
@@ -285,7 +291,7 @@ export type StopReason = "stop" | "length" | "toolUse" | "error" | "aborted";
 /** User turn in a text-model conversation. */
 export interface UserMessage {
   role: "user";
-  content: string | (TextContent | ImageContent)[];
+  content: string | (TextContent | ImageContent | AudioContent)[];
   timestamp: number; // Unix timestamp in milliseconds
   /**
    * Marks a user message that carries transient current-turn runtime context
@@ -322,7 +328,7 @@ export interface ToolResultMessage<TDetails = unknown> {
   role: "toolResult";
   toolCallId: string;
   toolName: string;
-  content: (TextContent | ImageContent)[]; // Supports text and images
+  content: (TextContent | ImageContent | AudioContent)[];
   details?: TDetails;
   isError: boolean;
   timestamp: number; // Unix timestamp in milliseconds
