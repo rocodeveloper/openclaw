@@ -324,7 +324,7 @@ describe("Responses reasoning effort", () => {
 describe("convertResponsesMessages", () => {
   const allowedToolCallProviders = testAllowedToolCallProviders;
 
-  it("converts supported audio input to an input_audio item", () => {
+  it("represents audio input as text when the Responses contract lacks audio input", () => {
     const model = {
       ...nativeOpenAIModel,
       input: ["text", "audio"],
@@ -344,8 +344,9 @@ describe("convertResponsesMessages", () => {
     );
 
     expect(input).toContainEqual({
-      type: "input_audio",
-      input_audio: { data: "YXVkaW8=", format: "mp3" },
+      type: "message",
+      role: "user",
+      content: [{ type: "input_text", text: "(audio omitted: unsupported by OpenAI Responses)" }],
     });
     expect(input).not.toContainEqual(expect.objectContaining({ type: "input_image" }));
   });

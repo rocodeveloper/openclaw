@@ -431,21 +431,28 @@ function convertAnthropicMessages(
             type: "image";
             source: { type: "base64"; media_type: string; data: string };
           }
-      > = msg.content.map((item) =>
-        item.type === "text"
-          ? {
-              type: "text",
-              text: sanitizeTransportPayloadText(item.text),
-            }
-          : {
-              type: "image",
-              source: {
-                type: "base64",
-                media_type: item.mimeType,
-                data: item.data,
-              },
-            },
-      );
+      > = msg.content.map((item) => {
+        if (item.type === "text") {
+          return {
+            type: "text",
+            text: sanitizeTransportPayloadText(item.text),
+          };
+        }
+        if (item.type === "audio") {
+          return {
+            type: "text",
+            text: "(audio omitted: model does not support audio)",
+          };
+        }
+        return {
+          type: "image",
+          source: {
+            type: "base64",
+            media_type: item.mimeType,
+            data: item.data,
+          },
+        };
+      });
       let filteredBlocks = model.input.includes("image")
         ? blocks
         : blocks.filter((block) => block.type !== "image");

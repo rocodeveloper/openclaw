@@ -568,7 +568,7 @@ export interface ToolResultEvent {
   toolCallId: string;
   toolName: string;
   input: Record<string, unknown>;
-  content: Array<TextContent | ImageContent>;
+  content: Array<TextContent | ImageContent | AudioContent>;
   details: unknown;
   isError: boolean;
 }

@@ -5,7 +5,6 @@ import type {
   ResponseFunctionCallOutputItemList,
   ResponseFunctionToolCall,
   ResponseInput,
-  ResponseInputAudio,
   ResponseInputItem,
   ResponseInputContent,
   ResponseInputImage,
@@ -91,21 +90,6 @@ type ResponsesInputTokensDetails = {
   cached_tokens?: number;
   cache_write_tokens?: number;
 };
-type ResponseInputItemWithAudio = ResponseInputItem | ResponseInputAudio;
-
-function resolveOpenAIAudioFormat(mimeType: string): "mp3" | "wav" | undefined {
-  switch (mimeType.split(";", 1)[0]?.trim().toLowerCase()) {
-    case "audio/mpeg":
-    case "audio/mp3":
-      return "mp3";
-    case "audio/wav":
-    case "audio/x-wav":
-    case "audio/wave":
-      return "wav";
-    default:
-      return undefined;
-  }
-}
 type AzureResponsesContentPartAddedEvent = Omit<ResponsesContentPartAddedEvent, "part"> & {
   part: AzureResponsesTextContentPart;
 };
@@ -264,7 +248,7 @@ export function convertResponsesMessages<TApi extends Api>(
   allowedToolCallProviders: ReadonlySet<string>,
   options?: ConvertResponsesMessagesOptions,
 ): ResponseInput {
-  const messages: ResponseInputItemWithAudio[] = [];
+  const messages: ResponseInputItem[] = [];
   const shouldReplayResponsesItemIds = options?.replayResponsesItemIds ?? true;
 
   const normalizeIdPart = (part: string): string => {
@@ -330,31 +314,13 @@ export function convertResponsesMessages<TApi extends Api>(
           content: [{ type: "input_text", text: sanitizeSurrogates(msg.content) }],
         });
       } else {
-        let content: ResponseInputContent[] = [];
+        const content: ResponseInputContent[] = [];
         for (const item of msg.content) {
           if (item.type === "audio") {
-            if (content.length > 0) {
-              messages.push({ type: "message", role: "user", content });
-              content = [];
-            }
-            const format = resolveOpenAIAudioFormat(item.mimeType);
-            if (format) {
-              messages.push({
-                type: "input_audio",
-                input_audio: { data: item.data, format },
-              } satisfies ResponseInputAudio);
-            } else {
-              messages.push({
-                type: "message",
-                role: "user",
-                content: [
-                  {
-                    type: "input_text",
-                    text: "(audio omitted: unsupported audio format)",
-                  } satisfies ResponseInputText,
-                ],
-              });
-            }
+            content.push({
+              type: "input_text",
+              text: "(audio omitted: unsupported by OpenAI Responses)",
+            } satisfies ResponseInputText);
             continue;
           }
           if (item.type === "text") {
@@ -497,7 +463,7 @@ export function convertResponsesMessages<TApi extends Api>(
     msgIndex++;
   }
 
-  return messages as ResponseInput;
+  return messages;
 }
 
 // =============================================================================

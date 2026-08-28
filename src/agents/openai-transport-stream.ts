@@ -1103,7 +1103,7 @@ function convertResponsesMessages(
     authProfileId?: string;
   },
 ): ResponseInput {
-  const messages: ResponseInput = [];
+  const messages: ResponseInputItem[] = [];
   const shouldReplayReasoningItems = options?.replayReasoningItems ?? true;
   const shouldReplayResponsesItemIds = options?.replayResponsesItemIds ?? true;
   const replayContext = buildOpenAIResponsesReplayContext(model, {
@@ -1182,17 +1182,25 @@ function convertResponsesMessages(
           ]),
         );
       } else {
-        const content = (
-          msg.content.map((item) =>
-            item.type === "text"
-              ? { type: "input_text", text: sanitizeTransportPayloadText(item.text) }
-              : {
-                  type: "input_image",
-                  detail: "auto",
-                  image_url: `data:${item.mimeType};base64,${item.data}`,
-                },
-          ) as ResponseInputMessageContentList
-        ).filter((item) => model.input.includes("image") || item.type !== "input_image");
+        const content: ResponseInputMessageContentList = [];
+        for (const item of msg.content) {
+          if (item.type === "audio") {
+            content.push({
+              type: "input_text",
+              text: "(audio omitted: unsupported by OpenAI Responses)",
+            });
+            continue;
+          }
+          if (item.type === "text") {
+            content.push({ type: "input_text", text: sanitizeTransportPayloadText(item.text) });
+          } else if (model.input.includes("image")) {
+            content.push({
+              type: "input_image",
+              detail: "auto",
+              image_url: `data:${item.mimeType};base64,${item.data}`,
+            });
+          }
+        }
         if (content.length > 0) {
           messages.push(buildResponsesInputMessage("user", content));
         }

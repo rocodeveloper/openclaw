@@ -3899,6 +3899,95 @@ describe("openai transport stream", () => {
     ]);
   });
 
+  it("represents Responses audio as text without encoding it as an image", () => {
+    const params = buildOpenAIResponsesParams(
+      {
+        id: "gpt-5.4",
+        name: "GPT-5.4",
+        api: "openai-responses",
+        provider: "openai",
+        baseUrl: "https://api.openai.com/v1",
+        reasoning: true,
+        input: ["text", "audio", "image"],
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        contextWindow: 200000,
+        maxTokens: 8192,
+      } satisfies Model<"openai-responses">,
+      {
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: "before" },
+              { type: "audio", mimeType: "audio/mpeg", data: "mp3" },
+              { type: "audio", mimeType: "audio/wav", data: "wav" },
+              { type: "audio", mimeType: "audio/ogg", data: "ogg" },
+              { type: "image", mimeType: "image/png", data: "image" },
+              { type: "text", text: "after" },
+            ],
+          },
+        ],
+        tools: [],
+      } as never,
+      undefined,
+    ) as { input?: unknown[] };
+
+    expect(params.input).toEqual([
+      {
+        type: "message",
+        role: "user",
+        content: [
+          { type: "input_text", text: "before" },
+          { type: "input_text", text: "(audio omitted: unsupported by OpenAI Responses)" },
+          { type: "input_text", text: "(audio omitted: unsupported by OpenAI Responses)" },
+          { type: "input_text", text: "(audio omitted: unsupported by OpenAI Responses)" },
+          { type: "input_image", detail: "auto", image_url: "data:image/png;base64,image" },
+          { type: "input_text", text: "after" },
+        ],
+      },
+    ]);
+  });
+
+  it("keeps Responses audio tool results as text", () => {
+    const params = buildOpenAIResponsesParams(
+      {
+        id: "gpt-5.4",
+        name: "GPT-5.4",
+        api: "openai-responses",
+        provider: "openai",
+        baseUrl: "https://api.openai.com/v1",
+        reasoning: true,
+        input: ["text", "audio", "image"],
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        contextWindow: 200000,
+        maxTokens: 8192,
+      } satisfies Model<"openai-responses">,
+      {
+        messages: [
+          {
+            role: "assistant",
+            api: "openai-responses",
+            provider: "openai",
+            model: "gpt-5.4",
+            content: [{ type: "toolCall", id: "call_audio", name: "audio", arguments: {} }],
+            timestamp: 1,
+          },
+          {
+            role: "toolResult",
+            toolCallId: "call_audio",
+            content: [{ type: "audio", mimeType: "audio/mpeg", data: "audio" }],
+          },
+        ],
+        tools: [],
+      } as never,
+      undefined,
+    ) as { input?: Array<{ type?: string; output?: unknown }> };
+
+    const functionOutput = params.input?.find((item) => item.type === "function_call_output");
+    expect(functionOutput?.output).toBe("(see attached audio)");
+    expect(params.input?.some((item) => item.type === "input_image")).toBe(false);
+  });
+
   it("uses model maxTokens for Responses params when runtime maxTokens is omitted", () => {
     const params = buildOpenAIResponsesParams(
       {

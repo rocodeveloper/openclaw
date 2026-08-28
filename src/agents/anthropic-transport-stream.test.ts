@@ -3104,6 +3104,71 @@ describe("anthropic transport stream", () => {
     expect(toolResult.is_error).toBe(false);
   });
 
+  it("serializes Anthropic user audio as a text placeholder", async () => {
+    await runTransportStream(
+      makeAnthropicTransportModel({ input: ["text", "image"] }),
+      {
+        messages: [
+          {
+            role: "user",
+            content: [{ type: "audio", mimeType: "audio/mpeg", data: "audio" }],
+          },
+        ],
+      } as AnthropicStreamContext,
+      { apiKey: "sk-ant-api" } as AnthropicStreamOptions,
+    );
+
+    expect(latestAnthropicRequest().payload.messages).toEqual([
+      {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: "(audio omitted: model does not support audio)",
+            cache_control: { type: "ephemeral" },
+          },
+        ],
+      },
+    ]);
+  });
+
+  it("keeps Anthropic audio tool results as text", async () => {
+    await runTransportStream(
+      makeAnthropicTransportModel({ input: ["text", "image"] }),
+      {
+        messages: [
+          {
+            role: "assistant",
+            provider: "anthropic",
+            api: "anthropic-messages",
+            model: "claude-sonnet-4-6",
+            stopReason: "toolUse",
+            timestamp: 0,
+            content: [{ type: "toolCall", id: "tool_audio", name: "audio", arguments: {} }],
+          },
+          {
+            role: "toolResult",
+            toolCallId: "tool_audio",
+            content: [{ type: "audio", mimeType: "audio/mpeg", data: "audio" }],
+            isError: false,
+          },
+        ],
+      } as AnthropicStreamContext,
+      { apiKey: "sk-ant-api" } as AnthropicStreamOptions,
+    );
+
+    const userMessage = findRecord(
+      latestAnthropicRequest().payload.messages,
+      (record) => record.role === "user",
+    );
+    const toolResult = findRecord(
+      userMessage.content,
+      (record) => record.type === "tool_result" && record.tool_use_id === "tool_audio",
+    );
+    expect(toolResult.content).toBe("(see attached audio)");
+    expect(JSON.stringify(toolResult)).not.toContain('"type":"image"');
+  });
+
   it("serializes structured non-image blocks in tool results as JSON text", async () => {
     await runTransportStream(
       makeAnthropicTransportModel({ id: "claude-sonnet-4-6" }),
