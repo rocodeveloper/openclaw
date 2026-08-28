@@ -146,6 +146,8 @@ tools:
 
 OpenClaw sends only one representation to the selected model. A channel can still transcribe before model selection when it needs text for admission or mention checks.
 
+Set `messages.tts.auto` to `inbound` to synthesize replies to inbound voice notes. ACP-backed agents preserve the inbound audio state for this TTS mode.
+
 Deepgram, ElevenLabs, Mistral, OpenAI, and xAI also register Voice Call
 streaming STT providers, so live phone audio can be forwarded to the selected
 vendor without waiting for a completed recording.
