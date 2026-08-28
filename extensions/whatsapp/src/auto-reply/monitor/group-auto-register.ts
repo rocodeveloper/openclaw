@@ -1,4 +1,5 @@
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
+import { normalizeAccountId, normalizeOptionalAccountId } from "openclaw/plugin-sdk/routing";
 import { getSelfIdentity, getSenderIdentity } from "../../identity.js";
 import type { WebInboundMessage } from "../../inbound/types.js";
 import { getWhatsAppRuntime } from "../../runtime.js";
@@ -9,6 +10,7 @@ import { normalizeE164 } from "./group-gating.runtime.js";
 type WhatsAppConfig = NonNullable<NonNullable<OpenClawConfig["channels"]>["whatsapp"]>;
 type WhatsAppAccounts = NonNullable<WhatsAppConfig["accounts"]>;
 type WhatsAppGroups = NonNullable<WhatsAppConfig["groups"]>;
+type RouteBinding = NonNullable<OpenClawConfig["bindings"]>[number];
 
 function normalizeGroupCommandText(text: string | undefined): string {
   return (text ?? "")
@@ -20,7 +22,7 @@ function normalizeGroupCommandText(text: string | undefined): string {
     .toLowerCase();
 }
 
-function isRegisterCommand(text: string | undefined): boolean {
+export function isRegisterCommand(text: string | undefined): boolean {
   const commandText = normalizeGroupCommandText(text);
   return commandText === "/register" || commandText === "register";
 }
@@ -36,7 +38,9 @@ function isOwnerSender(
   authDir?: string,
 ): boolean {
   const sender = normalizeE164(getSenderIdentity(msg, authDir).e164 ?? "");
-  if (!sender) return false;
+  if (!sender) {
+    return false;
+  }
   const owners = resolveOwnerList(
     baseMentionConfig,
     getSelfIdentity(msg, authDir).e164 ?? undefined,
@@ -48,10 +52,34 @@ function findAccountKey(
   accounts: WhatsAppAccounts | undefined,
   accountId: string | undefined,
 ): string | undefined {
-  if (!accounts || !accountId) return undefined;
-  if (Object.hasOwn(accounts, accountId)) return accountId;
+  if (!accounts || !accountId) {
+    return undefined;
+  }
+  if (Object.hasOwn(accounts, accountId)) {
+    return accountId;
+  }
   const target = accountId.toLowerCase();
   return Object.keys(accounts).find((k) => k.toLowerCase() === target);
+}
+
+function matchesGroupBinding(
+  binding: RouteBinding,
+  conversationId: string,
+  accountId: string | undefined,
+): boolean {
+  if (
+    binding.match.channel !== "whatsapp" ||
+    binding.match.peer?.kind !== "group" ||
+    binding.match.peer.id !== conversationId
+  ) {
+    return false;
+  }
+  const expectedAccountId = normalizeAccountId(accountId);
+  const bindingAccountId = normalizeOptionalAccountId(binding.match.accountId);
+  return (
+    bindingAccountId === expectedAccountId ||
+    (expectedAccountId === "default" && bindingAccountId === undefined)
+  );
 }
 
 function ensureGroupsContainer(cfg: OpenClawConfig, accountId: string | undefined): WhatsAppGroups {
@@ -69,15 +97,15 @@ function ensureGroupsContainer(cfg: OpenClawConfig, accountId: string | undefine
 }
 
 export async function handleUnregisteredGroup(params: {
-  cfg: OpenClawConfig;
   msg: WebInboundMessage;
   conversationId: string;
   accountId?: string;
+  agentId: string;
   baseMentionConfig: MentionConfig;
   authDir?: string;
   logVerbose: (msg: string) => void;
 }): Promise<void> {
-  const { msg, conversationId, accountId } = params;
+  const { msg, conversationId, accountId, agentId } = params;
 
   if (!isOwnerSender(params.baseMentionConfig, msg, params.authDir)) {
     return;
@@ -95,15 +123,14 @@ export async function handleUnregisteredGroup(params: {
           const hasBinding = draft.bindings.some(
             (binding) =>
               binding.match.channel === "whatsapp" &&
-              binding.match.peer?.kind === "group" &&
-              binding.match.peer.id === conversationId,
+              matchesGroupBinding(binding, conversationId, accountId),
           );
           if (!hasBinding) {
             const catchAllIdx = draft.bindings.findIndex(
               (binding) => binding.match.channel === "whatsapp" && !binding.match.peer,
             );
             const newBinding = {
-              agentId: "whatsapp-group",
+              agentId,
               match: {
                 channel: "whatsapp",
                 ...(accountId ? { accountId } : {}),
@@ -138,7 +165,6 @@ export async function handleUnregisteredGroup(params: {
 }
 
 export async function handleGroupUnregister(params: {
-  cfg: OpenClawConfig;
   msg: WebInboundMessage;
   conversationId: string;
   accountId?: string;
@@ -156,14 +182,12 @@ export async function handleGroupUnregister(params: {
     await getWhatsAppRuntime().config.mutateConfigFile({
       afterWrite: { mode: "auto" },
       mutate: (draft) => {
-        // Remove both entries because older versions wrote groups without an account scope.
         const wa = draft.channels?.whatsapp;
         if (wa) {
           const accountKey = findAccountKey(wa.accounts, accountId);
-          if (accountKey && wa.accounts[accountKey]?.groups?.[conversationId]) {
-            delete wa.accounts[accountKey].groups[conversationId];
-          }
-          if (wa.groups?.[conversationId]) {
+          if (accountKey) {
+            delete wa.accounts?.[accountKey]?.groups?.[conversationId];
+          } else if (wa.groups?.[conversationId]) {
             delete wa.groups[conversationId];
           }
         }
@@ -173,8 +197,7 @@ export async function handleGroupUnregister(params: {
             (binding) =>
               !(
                 binding.match.channel === "whatsapp" &&
-                binding.match.peer?.kind === "group" &&
-                binding.match.peer.id === conversationId
+                matchesGroupBinding(binding, conversationId, accountId)
               ),
           );
         }

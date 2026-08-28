@@ -29,13 +29,13 @@ import { maybeSendAckReaction } from "./ack-reaction.js";
 import { resolveAudioDeliveryMode } from "./audio-delivery.js";
 import { maybeBroadcastMessage } from "./broadcast.js";
 import type { EchoTracker } from "./echo.js";
-import type { GroupHistoryEntry } from "./group-gating.js";
-import { applyGroupGating } from "./group-gating.js";
 import {
   handleGroupUnregister,
   handleUnregisteredGroup,
   isUnregisterCommand,
 } from "./group-auto-register.js";
+import type { GroupHistoryEntry } from "./group-gating.js";
+import { applyGroupGating } from "./group-gating.js";
 import { updateLastRouteInBackground } from "./last-route.js";
 import { resolvePeerId } from "./peer.js";
 import { processMessage } from "./process-message.js";
@@ -391,10 +391,10 @@ export function createWebOnMessageHandler(params: {
         await clearPreDispatchReaction();
         if ("unregistered" in gating && gating.unregistered) {
           await handleUnregisteredGroup({
-            cfg,
             msg,
             conversationId,
             accountId: route.accountId,
+            agentId: route.agentId,
             baseMentionConfig,
             authDir: account.authDir,
             logVerbose,
@@ -405,7 +405,6 @@ export function createWebOnMessageHandler(params: {
       if (isUnregisterCommand(msg.payload.body)) {
         await clearPreDispatchReaction();
         await handleGroupUnregister({
-          cfg,
           msg,
           conversationId,
           accountId: route.accountId,

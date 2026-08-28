@@ -16,6 +16,7 @@ import type { MentionConfig } from "../mentions.js";
 import { buildMentionConfig, debugMention, resolveOwnerList } from "../mentions.js";
 import { stripMentionsForCommand } from "./commands.js";
 import { resolveGroupActivationFor } from "./group-activation.js";
+import { isRegisterCommand, isUnregisterCommand } from "./group-auto-register.js";
 import {
   hasControlCommand,
   implicitMentionKindWhen,
@@ -201,7 +202,11 @@ export async function applyGroupGating(params: ApplyGroupGatingParams) {
   );
   const activationCommand = parseActivationCommand(commandBody);
   const owner = isOwnerSender(baseMentionConfig, params.msg, params.authDir);
-  const shouldBypassMention = owner && hasControlCommand(commandBody, params.cfg);
+  const shouldBypassMention =
+    owner &&
+    (hasControlCommand(commandBody, params.cfg) ||
+      isRegisterCommand(commandBody) ||
+      isUnregisterCommand(commandBody));
 
   if (activationCommand.hasCommand && !owner) {
     return skipGroupMessageAndStoreHistory(
