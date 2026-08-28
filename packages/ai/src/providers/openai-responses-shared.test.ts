@@ -725,7 +725,7 @@ describe("convertResponsesMessages", () => {
     expect(functionOutput).toMatchObject({
       type: "function_call_output",
       call_id: "call_audio",
-      output: "(see attached audio)",
+      output: "(tool audio omitted: model does not support audio)",
     });
     expect(functionOutput?.output).not.toBe("(see attached image)");
     expect(functionOutput?.output).not.toBe("(no output)");

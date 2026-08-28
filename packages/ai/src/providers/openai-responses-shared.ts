@@ -91,6 +91,7 @@ type ResponsesInputTokensDetails = {
   cached_tokens?: number;
   cache_write_tokens?: number;
 };
+type ResponseInputItemWithAudio = ResponseInputItem | ResponseInputAudio;
 
 function resolveOpenAIAudioFormat(mimeType: string): "mp3" | "wav" | undefined {
   switch (mimeType.split(";", 1)[0]?.trim().toLowerCase()) {
@@ -263,7 +264,7 @@ export function convertResponsesMessages<TApi extends Api>(
   allowedToolCallProviders: ReadonlySet<string>,
   options?: ConvertResponsesMessagesOptions,
 ): ResponseInput {
-  const messages: ResponseInput = [];
+  const messages: ResponseInputItemWithAudio[] = [];
   const shouldReplayResponsesItemIds = options?.replayResponsesItemIds ?? true;
 
   const normalizeIdPart = (part: string): string => {
@@ -496,7 +497,7 @@ export function convertResponsesMessages<TApi extends Api>(
     msgIndex++;
   }
 
-  return messages;
+  return messages as ResponseInput;
 }
 
 // =============================================================================
