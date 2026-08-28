@@ -292,6 +292,35 @@ describe("Codex app-server dynamic tool build", () => {
     expect(webSearchAllowed).toBe(false);
   });
 
+  it("passes inbound audio state and accepted steered audio to message tools", async () => {
+    const workspaceDir = path.join(tempDir, "workspace");
+    const params = createParams(path.join(tempDir, "session.jsonl"), workspaceDir);
+    params.disableTools = false;
+    params.runtimePlan = createCodexRuntimePlanFixture();
+    params.currentInboundAudio = false;
+    params.replyOperation = {
+      acceptedSteeredInboundAudio: false,
+    } as never;
+    let capturedOptions: unknown;
+    setOpenClawCodingToolsFactoryForTests((options) => {
+      capturedOptions = options;
+      return [createRuntimeDynamicTool("message")];
+    });
+
+    await buildDynamicToolsForTest(params, workspaceDir);
+
+    const options = capturedOptions as {
+      currentInboundAudio?: boolean;
+      hasCurrentInboundAudio?: () => boolean;
+    };
+    expect(options).toMatchObject({ currentInboundAudio: false });
+    const hasCurrentInboundAudio = options.hasCurrentInboundAudio;
+    expect(hasCurrentInboundAudio).toBeTypeOf("function");
+    expect(hasCurrentInboundAudio?.()).toBe(false);
+    params.replyOperation.acceptedSteeredInboundAudio = true;
+    expect(hasCurrentInboundAudio?.()).toBe(true);
+  });
+
   it("separates persistent search policy from a runtime toolsAllow restriction", async () => {
     const workspaceDir = path.join(tempDir, "workspace");
     const params = createParams(path.join(tempDir, "session.jsonl"), workspaceDir);
