@@ -204,6 +204,7 @@ const ERROR_PATTERNS = {
     /used\s+all\s+available\s+credits/i,
     /(?:monthly\s+)?spend(?:ing)?\s+limit/i,
     /insufficient[_ ]quota/i,
+    // Provider billing APIs return these stable phrases without HTTP 402 metadata.
     /plan and billing/i,
     "credit balance",
     "plans & billing",

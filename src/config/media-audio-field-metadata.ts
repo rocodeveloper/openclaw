@@ -33,7 +33,7 @@ export const MEDIA_AUDIO_FIELD_HELP: Record<MediaAudioFieldKey, string> = {
   "tools.media.audio.enabled":
     "Enable audio understanding so voice notes or audio clips can be transcribed/summarized for agent context. Disable when audio ingestion is outside policy or unnecessary for your workflows.",
   "tools.media.audio.delivery":
-    'Select audio delivery mode: "auto" uses native audio for audio-capable models and transcription as fallback, "native" sends audio without transcription, and "transcript" always transcribes audio first. Default: "auto".',
+    'Select audio delivery mode: "auto" uses native audio for audio-capable models and transcription as fallback, "native" prefers native audio and transcribes when the model cannot accept audio, and "transcript" always transcribes audio first. Default: "auto".',
   "tools.media.audio.maxBytes":
     "Maximum accepted audio payload size in bytes before processing is rejected or clipped by policy. Set this based on expected recording length and upstream provider limits.",
   "tools.media.audio.maxChars":
