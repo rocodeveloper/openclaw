@@ -278,7 +278,18 @@ describe("createWebSendApi", () => {
     });
   });
 
-  it("sends structured sticker messages through the canonical send path", async () => {
+  it("sends WebP media with captions as images", async () => {
+    const payload = Buffer.from("webp");
+    await api.sendMessage("+1555", "caption", payload, "image/webp");
+
+    expect(sendMessage).toHaveBeenCalledWith("1555@s.whatsapp.net", {
+      image: payload,
+      caption: "caption",
+      mimetype: "image/webp",
+    });
+  });
+
+  it("sends explicit sticker messages through the canonical send path", async () => {
     const payload = Buffer.from("webp");
     const res = await api.sendSticker("+1555", payload);
 

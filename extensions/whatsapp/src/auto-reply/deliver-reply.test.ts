@@ -494,6 +494,35 @@ describe("deliverWebReply", () => {
     expect(logVerbose).toHaveBeenCalled();
   });
 
+  it("sends WebP media with captions as images", async () => {
+    const msg = makeMsg();
+    (
+      loadWebMedia as unknown as { mockResolvedValueOnce: (v: unknown) => void }
+    ).mockResolvedValueOnce({
+      buffer: Buffer.from("webp"),
+      contentType: "image/webp",
+      kind: "image",
+    });
+
+    await deliverWebReply({
+      replyResult: { text: "caption", mediaUrl: "http://example.com/img.webp" },
+      msg,
+      maxMediaBytes: 1024 * 1024,
+      textLimit: 200,
+      replyLogger,
+      skipLog: true,
+    });
+
+    const mediaPayload = requireRecord(
+      mockCallArg(msg.platform.sendMedia, 0, 0, "sendMedia"),
+      "sendMedia payload",
+    );
+    expectBuffer(mediaPayload.image, "sendMedia image");
+    expect(mediaPayload.caption).toBe("caption");
+    expect(mediaPayload.mimetype).toBe("image/webp");
+    expect(mediaPayload.sticker).toBeUndefined();
+  });
+
   it("marks errors visible after accepted media delivery", async () => {
     const msg = makeMsg();
     const error = new Error("tail send failed");
