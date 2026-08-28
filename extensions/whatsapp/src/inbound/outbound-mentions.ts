@@ -127,10 +127,7 @@ function participantValues(participant: WhatsAppOutboundMentionParticipant): {
   return typeof participant === "string" ? { id: participant } : participant;
 }
 
-// A @lid mention makes WhatsApp Desktop render the whole message blank (mobile and web are fine), and
-// picking a LID here also rewrites the visible text to the raw LID digits. Prefer a phone JID; fall back
-// to a LID only when no phone number is known. Keep the LID branch: WhatsApp is migrating to LID
-// addressing, so this preference has to flip back once phone-JID mentions stop being accepted.
+// Prefer phone JIDs because WhatsApp Desktop hides messages that mention a LID.
 function chooseMentionJid(participant: WhatsAppOutboundMentionParticipant): string | null {
   const values = participantValues(participant);
   const idJid = normalizeKnownUserJid(values.id ?? "");
@@ -187,17 +184,7 @@ function shouldSkipMentionAt(
   return Boolean((previous && /[\w@]/.test(previous)) || (next && /[\w@]/.test(next)));
 }
 
-// Direct @<digits> -> <digits>@s.whatsapp.net mapping for chats where a
-// participant list isn't available for lookup: 1:1 DMs, "self" groups, and the
-// fast-send reminder path (which sends without loading group metadata). WhatsApp
-// only renders a mention as @Name for @s.whatsapp.net JIDs — never @lid — so we
-// always emit the phone JID here. Restores fork commits 3dbdb85a65 + 7f5a384ae5,
-// which were dropped in the v2026.6 rebuild because upstream's participant-based
-// resolver (above) superseded the group case but left DM/no-participant sends
-// (e.g. owner reminders) without a rendered @tag.
-function resolveOutboundMentionsByDirectMapping(
-  text: string,
-): WhatsAppOutboundMentionResolution {
+function resolveOutboundMentionsByDirectMapping(text: string): WhatsAppOutboundMentionResolution {
   const codeRanges = collectCodeRanges(text);
   const mentionedJids: string[] = [];
   const seen = new Set<string>();

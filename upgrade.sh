@@ -1,19 +1,9 @@
 #!/usr/bin/env bash
-# Build the fork via GitHub Actions and (re)deploy the tarball to this VPS.
-#
-# Usage:
-#   bash /root/openclaw-fork/upgrade.sh               # push branch -> build -> deploy
-#   bash /root/openclaw-fork/upgrade.sh --deploy-only # download latest successful artifact + deploy
-#
-# NOTE: syncing with upstream + re-applying the fork's changes is a MANUAL
-# process now (re-apply worklist in tasks/open/[1]-029-fork-rebuild-v2026.6).
-# This script no longer auto-rebases — it only builds the current branch and
-# deploys the resulting tarball.
 set -euo pipefail
 
 FORK_DIR="/root/openclaw-fork"
 REPO="rocodeveloper/openclaw"
-BRANCH="rocobot-v2026.6"
+BRANCH="rocobot-v2026.7"
 ARTIFACT_DIR="/tmp/openclaw-build"
 INSTALL_DIR="/usr/lib/node_modules/openclaw"
 BIN_LINK="/usr/bin/openclaw"
@@ -27,7 +17,6 @@ for arg in "$@"; do
   esac
 done
 
-# ── Build via GH Actions ────────────────────────────────────────
 if [[ "$deploy_only" == false ]]; then
   echo "=== Pushing $BRANCH to trigger build ==="
   git push origin "$BRANCH"
@@ -46,7 +35,6 @@ if [[ "$deploy_only" == false ]]; then
   fi
 fi
 
-# ── Download artifact ───────────────────────────────────────────
 echo "=== Downloading latest successful build artifact ==="
 rm -rf "$ARTIFACT_DIR"
 RUN_ID=$(gh run list --repo "$REPO" --branch "$BRANCH" --workflow "Build Fork" --status success --limit 1 --json databaseId --jq '.[0].databaseId')
@@ -62,9 +50,7 @@ if [[ -z "$TARBALL" ]]; then
 fi
 echo "Artifact: $TARBALL"
 
-# ── Deploy ──────────────────────────────────────────────────────
-# Use tar + local npm install instead of `npm install -g` to avoid OOM on the
-# low-memory VPS (global install loads the whole dependency tree for resolution).
+# Use a local install because global npm resolution exceeds the VPS memory limit.
 echo "=== Stopping gateway ==="
 systemctl --user stop openclaw-gateway
 
@@ -75,10 +61,9 @@ tar xzf "$TARBALL" -C "$INSTALL_DIR" --strip-components=1
 
 echo "=== Installing dependencies ==="
 cd "$INSTALL_DIR"
-# NOTE (Option A / bundled whatsapp): baileys ships a postinstall hotfix via
-# scripts/postinstall-bundled-plugins.mjs. --ignore-scripts skips it; if whatsapp
-# misbehaves after deploy, re-run that script or drop --ignore-scripts here.
-npm install --omit=dev --ignore-scripts 2>&1 | tail -3
+npm install --omit=dev --ignore-scripts
+# Run this postinstall because --ignore-scripts skips the Baileys hotfix.
+node scripts/postinstall-bundled-plugins.mjs
 
 echo "=== Linking binary ==="
 ln -sf ../lib/node_modules/openclaw/openclaw.mjs "$BIN_LINK"

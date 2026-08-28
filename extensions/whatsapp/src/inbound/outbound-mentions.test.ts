@@ -135,8 +135,6 @@ describe("resolveWhatsAppOutboundMentions", () => {
   });
 
   it("direct-maps mentions for DMs and groups without a usable participant list", () => {
-    // DM: no group participant lookup, so map @<digits> straight to the phone JID
-    // (this is how owner reminders render @Name — fork commits 3dbdb85a65/7f5a384ae5).
     expect(
       resolveWhatsAppOutboundMentions({
         chatJid: "15551234567@s.whatsapp.net",
@@ -147,7 +145,6 @@ describe("resolveWhatsAppOutboundMentions", () => {
       text: "hi @+15551234567",
       mentionedJids: ["15551234567@s.whatsapp.net"],
     });
-    // Group send with no participant list loaded (e.g. the fast-send reminder path).
     expect(
       resolveWhatsAppOutboundMentions({
         chatJid: "40723572512-1515751976@g.us",
