@@ -417,6 +417,37 @@ describe("createWhatsAppOutboundBase", () => {
     });
   });
 
+  it("does not quote a group reply when the quoted participant is unknown", async () => {
+    const sendMessageWhatsApp = vi.fn(async () => ({
+      messageId: "msg-group-unknown",
+      toJid: "120363400000000000@g.us",
+    }));
+    const outbound = createWhatsAppOutboundBase({
+      chunker: (text) => [text],
+      sendMessageWhatsApp,
+      sendPollWhatsApp: vi.fn(),
+      shouldLogVerbose: () => false,
+      resolveTarget: ({ to }) => ({ ok: true as const, to: to ?? "" }),
+    });
+
+    await outbound.sendText!({
+      cfg: {} as never,
+      to: "120363400000000000@g.us",
+      text: "reply",
+      accountId: "default",
+      deps: { sendWhatsApp: sendMessageWhatsApp },
+      replyToId: "reply-group-unknown",
+    });
+
+    const options = sendMessageOptionsAt(
+      sendMessageWhatsApp,
+      0,
+      "120363400000000000@g.us",
+      "reply",
+    );
+    expect(options.quotedMessageKey).toBeUndefined();
+  });
+
   it("normalizes mediaUrls before payload delivery", async () => {
     const sendMessageWhatsApp = vi.fn(async () => ({
       messageId: "msg-1",
