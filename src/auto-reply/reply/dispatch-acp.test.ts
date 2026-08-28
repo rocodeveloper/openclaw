@@ -1514,7 +1514,7 @@ describe("tryDispatchAcpReply", () => {
     }
   });
 
-  it("skips ACP turns for non-image attachments when there is no text prompt", async () => {
+  it("skips ACP turns for unsupported attachments when there is no text prompt", async () => {
     setReadyAcpResolution();
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "dispatch-acp-"));
     const docPath = path.join(tempDir, "inbound.pdf");
@@ -1538,6 +1538,28 @@ describe("tryDispatchAcpReply", () => {
     } finally {
       await fs.rm(tempDir, { recursive: true, force: true });
     }
+  });
+
+  it("forwards supported audio attachments into ACP turns without a text prompt", async () => {
+    setReadyAcpResolution();
+    const audioPath = "/tmp/openclaw-inbound-audio.ogg";
+    const audio = Buffer.from("audio-bytes");
+    acpAttachmentBuffers.set(audioPath, audio);
+
+    await runDispatch({
+      bodyForAgent: "   ",
+      ctxOverrides: {
+        MediaPath: audioPath,
+        MediaType: "audio/ogg; codecs=opus",
+      },
+    });
+
+    expect(runTurnCall().attachments).toEqual([
+      {
+        mediaType: "audio/ogg; codecs=opus",
+        data: audio.toString("base64"),
+      },
+    ]);
   });
 
   it("surfaces ACP policy errors as final error replies", async () => {

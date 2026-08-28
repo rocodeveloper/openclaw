@@ -32,9 +32,24 @@ type AgentTurnAttachmentRuntime = Pick<
 
 const AGENT_TURN_ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024;
 const AGENT_TURN_ATTACHMENT_TIMEOUT_MS = 1_000;
+const AGENT_TURN_AUDIO_MEDIA_TYPES = new Set([
+  "audio/mpeg",
+  "audio/mp4",
+  "audio/ogg",
+  "audio/wav",
+  "audio/webm",
+]);
 
 function isImageAgentTurnAttachment(attachment: MediaAttachment): boolean {
   return attachment.mime?.startsWith("image/") === true;
+}
+
+function isSupportedAgentTurnAttachment(attachment: MediaAttachment): boolean {
+  if (isImageAgentTurnAttachment(attachment)) {
+    return true;
+  }
+  const mediaType = attachment.mime?.split(";", 1)[0]?.trim().toLowerCase();
+  return mediaType ? AGENT_TURN_AUDIO_MEDIA_TYPES.has(mediaType) : false;
 }
 
 function hasInboundHistoryMedia(ctx: MsgContext): boolean {
@@ -98,9 +113,9 @@ export async function resolveAgentTurnAttachments(params: {
   const results: AgentTurnAttachment[] = [];
   const resultIndexes: number[] = [];
   const resolvedHistoryImages: RecentInboundHistoryImage[] = [];
-  const resolveImageAttachment = async (attachment: MediaAttachment): Promise<boolean> => {
+  const resolveAttachment = async (attachment: MediaAttachment): Promise<boolean> => {
     const mediaType = attachment.mime ?? "application/octet-stream";
-    if (!isImageAgentTurnAttachment(attachment)) {
+    if (!isSupportedAgentTurnAttachment(attachment)) {
       return false;
     }
     if (!normalizeOptionalString(attachment.path)) {
@@ -141,7 +156,9 @@ export async function resolveAgentTurnAttachments(params: {
   const hasCurrentMedia = currentAttachments.length > 0;
   const hasCurrentImageCandidate = currentAttachments.some(isImageAgentTurnAttachment);
   for (const attachment of currentAttachments) {
-    currentImageResolved = (await resolveImageAttachment(attachment)) || currentImageResolved;
+    const resolved = await resolveAttachment(attachment);
+    currentImageResolved =
+      (resolved && isImageAgentTurnAttachment(attachment)) || currentImageResolved;
   }
   if (
     includeRecentHistoryImages &&
@@ -150,7 +167,7 @@ export async function resolveAgentTurnAttachments(params: {
   ) {
     // History images are only used when the current turn did not already provide an image.
     for (const attachment of historyAttachments) {
-      await resolveImageAttachment(attachment);
+      await resolveAttachment(attachment);
     }
   }
   return {
