@@ -69,6 +69,38 @@ describe("reply_payload_sending hook runner", () => {
     }
   });
 
+  it("honors a plugin timeout for a slow successful outbound handler", async () => {
+    vi.useFakeTimers();
+    try {
+      const slow = vi.fn(
+        () =>
+          new Promise<PluginHookReplyPayloadSendingResult>((resolve) => {
+            setTimeout(() => resolve({ payload: { text: "slow success" } }), 6_000);
+          }),
+      );
+      const { registry, runner } = createHookRunnerWithRegistry([
+        {
+          hookName: "reply_payload_sending",
+          handler: slow,
+        },
+      ]);
+      registry.typedHooks[0].timeoutMs = 10_000;
+
+      const resultPromise = runner.runReplyPayloadSending(
+        replyPayloadSendingEvent,
+        replyPayloadSendingCtx,
+      );
+      await vi.advanceTimersByTimeAsync(6_000);
+
+      await expect(resultPromise).resolves.toMatchObject({
+        payload: { text: "slow success" },
+      });
+      expect(slow).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("passes the latest payload between handlers", async () => {
     const first = vi.fn().mockResolvedValue({
       payload: {

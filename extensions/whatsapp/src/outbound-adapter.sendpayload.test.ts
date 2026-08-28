@@ -186,7 +186,7 @@ describe("whatsappOutbound sendPayload", () => {
     expect(sendWhatsApp).not.toHaveBeenCalled();
   });
 
-  it("suppresses routed error payloads", async () => {
+  it("sends routed error payloads through the shared error contract", async () => {
     const sendWhatsApp = vi.fn();
 
     const result = await whatsappOutbound.sendPayload!({
@@ -194,21 +194,6 @@ describe("whatsappOutbound sendPayload", () => {
       to: "5511999999999@c.us",
       text: "",
       payload: { text: "provider exploded", isError: true },
-      deps: { sendWhatsApp },
-    });
-
-    expect(result).toEqual({ channel: "whatsapp", messageId: "" });
-    expect(sendWhatsApp).not.toHaveBeenCalled();
-  });
-
-  it("does not suppress friendly user-facing error payloads", async () => {
-    const sendWhatsApp = vi.fn();
-
-    const result = await whatsappOutbound.sendPayload!({
-      cfg: {},
-      to: "5511999999999@c.us",
-      text: "",
-      payload: { text: "The AI service is temporarily overloaded. Please try again in a moment.", isError: true },
       deps: { sendWhatsApp },
     });
 

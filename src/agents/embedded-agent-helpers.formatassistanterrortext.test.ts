@@ -162,6 +162,16 @@ describe("formatAssistantErrorText", () => {
     const result = formatAssistantErrorText(msg);
     expect(result).toBe(BILLING_ERROR_USER_MESSAGE);
   });
+
+  it("keeps actionable billing guidance without exposing credentials", () => {
+    const result = formatBillingErrorMessage("Anthropic", "claude-sonnet-4-5", "api_key");
+
+    expect(result).toContain("Anthropic (claude-sonnet-4-5)");
+    expect(result).toContain("API key");
+    expect(result).toContain("billing dashboard");
+    expect(result).toContain("top up");
+    expect(result).not.toContain("sk-secret");
+  });
   it("returns a friendly billing message for HTTP 402 errors", () => {
     const msg = makeAssistantError("HTTP 402 Payment Required");
     const result = formatAssistantErrorText(msg);

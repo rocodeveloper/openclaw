@@ -1093,7 +1093,7 @@ describe("whatsapp inbound dispatch", () => {
     expect(rememberSentText).not.toHaveBeenCalled();
   });
 
-  it("suppresses error payload text", async () => {
+  it("delivers normalized error payload text", async () => {
     const deliverReply = vi.fn(async () => acceptedDeliveryResult());
     const rememberSentText = vi.fn();
 
@@ -1102,37 +1102,13 @@ describe("whatsapp inbound dispatch", () => {
     const deliver = getCapturedDeliver();
     expect(deliver).toBeTypeOf("function");
 
-    await deliver?.({ text: "provider exploded", isError: true }, { kind: "final" });
-
-    expect(deliverReply).not.toHaveBeenCalled();
-    expect(rememberSentText).not.toHaveBeenCalled();
-  });
-
-  it("does not suppress friendly user-facing error payload text", async () => {
-    const deliverReply = vi.fn(async () => acceptedDeliveryResult());
-    const rememberSentText = vi.fn();
-
-    await dispatchBufferedReply({ deliverReply, rememberSentText });
-
-    const deliver = getCapturedDeliver();
-    expect(deliver).toBeTypeOf("function");
-
-    await deliver?.({ text: "The AI service is temporarily overloaded. Please try again in a moment.", isError: true }, { kind: "final" });
-
-    expect(deliverReply).toHaveBeenCalled();
-    expect(rememberSentText).toHaveBeenCalled();
-  });
-
-  it("does not suppress billing busy error payload text", async () => {
-    const deliverReply = vi.fn(async () => acceptedDeliveryResult());
-    const rememberSentText = vi.fn();
-
-    await dispatchBufferedReply({ deliverReply, rememberSentText });
-
-    const deliver = getCapturedDeliver();
-    expect(deliver).toBeTypeOf("function");
-
-    await deliver?.({ text: "Can't talk right now, I'm busy reorganizing my 1s and 0s.", isError: true }, { kind: "final" });
+    await deliver?.(
+      {
+        text: "⚠️ Anthropic (claude-sonnet-4-5) returned a billing error — your API key has run out of credits or has an insufficient balance. Check your Anthropic billing dashboard and top up or switch to a different API key.",
+        isError: true,
+      },
+      { kind: "final" },
+    );
 
     expect(deliverReply).toHaveBeenCalled();
     expect(rememberSentText).toHaveBeenCalled();

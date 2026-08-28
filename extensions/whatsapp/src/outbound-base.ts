@@ -20,7 +20,6 @@ import {
 import { WHATSAPP_LEGACY_OUTBOUND_SEND_DEP_KEYS } from "./outbound-send-deps.js";
 import { lookupInboundMessageMetaForTarget } from "./quoted-message.js";
 import { toWhatsappJid } from "./text-runtime.js";
-import { isFriendlyErrorText } from "./auto-reply/util.js";
 
 type WhatsAppChunker = NonNullable<ChannelOutboundAdapter["chunker"]>;
 type WhatsAppSendTextOptions = {
@@ -98,6 +97,7 @@ type WhatsAppOutboundBaseCore = Pick<
   | "deliveryCapabilities"
   | "pollMaxOptions"
   | "resolveTarget"
+  | "sendTextOnlyErrorPayloads"
   | "sendText"
   | "sendMedia"
   | "sendPoll"
@@ -121,6 +121,7 @@ export function createWhatsAppOutboundBase({
   | "deliveryCapabilities"
   | "pollMaxOptions"
   | "resolveTarget"
+  | "sendTextOnlyErrorPayloads"
   | "sendPayload"
   | "sendText"
   | "sendMedia"
@@ -151,6 +152,7 @@ export function createWhatsAppOutboundBase({
     chunker,
     chunkerMode: "text",
     textChunkLimit: 4000,
+    sendTextOnlyErrorPayloads: true,
     sanitizeText: ({ text }) => normalizeText(text),
     deliveryCapabilities: {
       durableFinal: {
@@ -262,9 +264,6 @@ export function createWhatsAppOutboundBase({
   return {
     ...outbound,
     sendPayload: async (ctx) => {
-      if (ctx.payload.isError === true && !isFriendlyErrorText(ctx.payload.text)) {
-        return { channel: "whatsapp", messageId: "" };
-      }
       const payload = normalizeWhatsAppOutboundPayload(ctx.payload, { normalizeText });
       if (!payload.text && !(payload.mediaUrl || payload.mediaUrls?.length)) {
         if (ctx.payload.interactive || ctx.payload.presentation || ctx.payload.channelData) {

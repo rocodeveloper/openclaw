@@ -34,7 +34,6 @@ export const whatsappChannelOutbound = {
       resolveWhatsAppOutboundTarget({ to, allowFrom, mode }),
     normalizeText: normalizeWhatsAppChannelSendText,
   }),
-  sendTextOnlyErrorPayloads: true,
   normalizePayload: ({ payload }: { payload: { text?: string } }) => ({
     ...payload,
     text: normalizeWhatsAppChannelPayloadText(payload.text),
