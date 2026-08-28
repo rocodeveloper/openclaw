@@ -324,8 +324,8 @@ describe("createWebSendApi", () => {
     await api.sendMessage("120363000000000000@g.us", "ping @+5511976136970");
 
     expect(sendMessage).toHaveBeenCalledWith("120363000000000000@g.us", {
-      text: "ping @277038292303944",
-      mentions: ["277038292303944@lid"],
+      text: "ping @+5511976136970",
+      mentions: ["5511976136970@s.whatsapp.net"],
     });
   });
 
@@ -415,9 +415,9 @@ describe("createWebSendApi", () => {
     expectSendContentFields(0, {
       document: payload,
       fileName: "promo.jpg",
-      caption: "cap @277038292303944",
+      caption: "cap @+5511976136970",
       mimetype: "image/jpeg",
-      mentions: ["277038292303944@lid"],
+      mentions: ["5511976136970@s.whatsapp.net"],
     });
   });
 

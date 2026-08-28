@@ -1,5 +1,5 @@
 // Model list row tests cover rendered row construction for model listing output.
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ModelRow } from "./list.types.js";
 
 const mocks = vi.hoisted(() => ({
@@ -194,6 +194,10 @@ describe("appendProviderCatalogRows", () => {
 });
 
 describe("appendConfiguredProviderRows", () => {
+  beforeEach(() => {
+    mocks.normalizeProviderResolvedModelWithPlugin.mockClear();
+  });
+
   it("preserves configured audio input in model-list rows", async () => {
     const rows: ModelRow[] = [];
 

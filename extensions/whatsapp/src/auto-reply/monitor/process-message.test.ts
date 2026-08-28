@@ -381,7 +381,7 @@ describe("processMessage group system prompt wiring", () => {
         authorized: true,
         body: "/model",
       },
-      rawBody: "@manu /model",
+      rawBody: "/model",
     });
   });
 

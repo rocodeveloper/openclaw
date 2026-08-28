@@ -911,9 +911,11 @@ describe("web monitor inbox", () => {
     await inbound?.platform.reply("pong");
 
     expect(sleepWithAbortMock).toHaveBeenCalledWith(10, undefined);
-    expect(replacementSock.sendMessage).toHaveBeenCalledWith("999@s.whatsapp.net", {
-      text: "pong",
-    });
+    expect(replacementSock.sendMessage).toHaveBeenCalledWith(
+      "999@s.whatsapp.net",
+      { text: "pong" },
+      { messageId: expect.any(String) },
+    );
     expect(sock.sendMessage).not.toHaveBeenCalled();
 
     await listener.close();
@@ -1222,12 +1224,20 @@ describe("web monitor inbox", () => {
 
     await inbound?.platform.reply("pong");
 
-    expect(sock.sendMessage).toHaveBeenNthCalledWith(1, "999@s.whatsapp.net", {
-      text: "pong",
-    });
-    expect(sock.sendMessage).toHaveBeenNthCalledWith(2, "999@s.whatsapp.net", {
-      text: "pong",
-    });
+    const firstMessageId = sock.sendMessage.mock.calls[0]?.[2]?.messageId;
+    expect(firstMessageId).toEqual(expect.any(String));
+    expect(sock.sendMessage).toHaveBeenNthCalledWith(
+      1,
+      "999@s.whatsapp.net",
+      { text: "pong" },
+      { messageId: firstMessageId },
+    );
+    expect(sock.sendMessage).toHaveBeenNthCalledWith(
+      2,
+      "999@s.whatsapp.net",
+      { text: "pong" },
+      { messageId: firstMessageId },
+    );
     expect(socketRef.current).toBe(sock);
     expect(sleepWithAbortMock).toHaveBeenCalledTimes(1);
 
