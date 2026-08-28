@@ -212,6 +212,51 @@ describe("tryDispatchAcpReplyHook", () => {
     expect((payload as { toolsAllow?: string[] }).toolsAllow).toStrictEqual(["message"]);
   });
 
+  it("derives inbound audio from the message context when the hook omits it", async () => {
+    bypassMock.mockResolvedValue(false);
+    dispatchMock.mockResolvedValue({
+      queuedFinal: true,
+      counts: { tool: 0, block: 0, final: 1 },
+    });
+
+    await tryDispatchAcpReplyHook(
+      {
+        ...event,
+        inboundAudio: undefined,
+        ctx: buildTestCtx({
+          SessionKey: "agent:test:session",
+          Body: "<media:audio>",
+          MediaType: "audio/ogg; codecs=opus",
+        }),
+      },
+      ctx,
+    );
+
+    expectDispatchPayloadFields({ inboundAudio: true });
+  });
+
+  it("keeps inbound audio false for text messages when the hook omits it", async () => {
+    bypassMock.mockResolvedValue(false);
+    dispatchMock.mockResolvedValue({
+      queuedFinal: true,
+      counts: { tool: 0, block: 0, final: 1 },
+    });
+
+    await tryDispatchAcpReplyHook(
+      {
+        ...event,
+        inboundAudio: undefined,
+        ctx: buildTestCtx({
+          SessionKey: "agent:test:session",
+          Body: "hello",
+        }),
+      },
+      ctx,
+    );
+
+    expectDispatchPayloadFields({ inboundAudio: false });
+  });
+
   it("returns unhandled when ACP dispatcher declines the turn", async () => {
     bypassMock.mockResolvedValue(false);
     dispatchMock.mockResolvedValue(undefined);

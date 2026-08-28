@@ -271,6 +271,23 @@ describe("Codex app-server dynamic tool build", () => {
     );
   });
 
+  it("passes inbound audio state to message tools", async () => {
+    const workspaceDir = path.join(tempDir, "workspace");
+    const params = createParams(path.join(tempDir, "session.jsonl"), workspaceDir);
+    params.disableTools = false;
+    params.runtimePlan = createCodexRuntimePlanFixture();
+    params.currentInboundAudio = true;
+    let capturedOptions: unknown;
+    setOpenClawCodingToolsFactoryForTests((options) => {
+      capturedOptions = options;
+      return [createRuntimeDynamicTool("message")];
+    });
+
+    await buildDynamicToolsForTest(params, workspaceDir);
+
+    expect(capturedOptions).toMatchObject({ currentInboundAudio: true });
+  });
+
   it("limits Codex memory flush runs to managed read and write tools", async () => {
     const factoryOptions: unknown[] = [];
     setOpenClawCodingToolsFactoryForTests((options) => {

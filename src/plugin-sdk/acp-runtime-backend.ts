@@ -1,6 +1,7 @@
 // Lightweight ACP runtime backend helpers for startup-loaded plugins.
 
 import { hasExplicitCommandContextText } from "../auto-reply/reply/context-text.js";
+import { hasInboundAudio } from "../auto-reply/reply/inbound-media.js";
 import type {
   PluginHookReplyDispatchContext,
   PluginHookReplyDispatchEvent,
@@ -82,7 +83,7 @@ export async function tryDispatchAcpReplyHook(
     toolsAllow: event.toolsAllow,
     images: event.images,
     abortSignal: ctx.abortSignal,
-    inboundAudio: event.inboundAudio,
+    inboundAudio: event.inboundAudio ?? hasInboundAudio(event.ctx),
     sessionTtsAuto: event.sessionTtsAuto,
     ttsChannel: event.ttsChannel,
     suppressUserDelivery: event.suppressUserDelivery,

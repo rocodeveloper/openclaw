@@ -270,6 +270,7 @@ export async function buildDynamicTools(input: DynamicToolBuildParams) {
     hookChannelId: resolveCodexAppServerHookChannelId(params, input.sandboxSessionKey),
     currentThreadTs: params.currentThreadTs,
     currentMessageId: params.currentMessageId,
+    currentInboundAudio: params.currentInboundAudio,
     replyToMode: params.replyToMode,
     hasRepliedRef: params.hasRepliedRef,
     modelHasVision,
