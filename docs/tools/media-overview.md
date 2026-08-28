@@ -130,6 +130,22 @@ attachment on the inbound context, so the shared media-understanding pass
 reuses that transcript instead of making a second STT call for the same
 audio.
 
+Set `tools.media.audio.delivery` to control the agent input for voice notes:
+
+```yaml
+tools:
+  media:
+    audio:
+      enabled: true
+      delivery: auto
+```
+
+- `auto` sends native audio when the selected model declares audio input support. It uses the transcript for other models.
+- `native` requests native audio. It uses the transcript when the selected model cannot accept audio.
+- `transcript` always sends the transcript to the model.
+
+OpenClaw sends only one representation to the selected model. A channel can still transcribe before model selection when it needs text for admission or mention checks.
+
 Deepgram, ElevenLabs, Mistral, OpenAI, and xAI also register Voice Call
 streaming STT providers, so live phone audio can be forwarded to the selected
 vendor without waiting for a completed recording.
