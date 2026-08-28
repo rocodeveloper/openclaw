@@ -509,6 +509,28 @@ describe("loadImageFromRef", () => {
       await fs.rm(sandboxParent, { recursive: true, force: true });
     }
   });
+
+  it("returns typed audio content for audio files", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-native-audio-"));
+    const audioPath = path.join(stateDir, "voice.ogg");
+    await fs.writeFile(audioPath, Buffer.from("OggS\0\0\0\0"));
+
+    try {
+      const audio = await loadImageFromRef(
+        { raw: audioPath, type: "path", resolved: audioPath },
+        stateDir,
+        { workspaceOnly: true },
+      );
+
+      expect(audio).toEqual({
+        type: "audio",
+        data: Buffer.from("OggS\0\0\0\0").toString("base64"),
+        mimeType: "audio/ogg",
+      });
+    } finally {
+      await fs.rm(stateDir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("detectAndLoadPromptImages", () => {
@@ -543,6 +565,24 @@ describe("detectAndLoadPromptImages", () => {
 
     expect(result.images).toHaveLength(0);
     expect(result.detectedRefs).toHaveLength(0);
+  });
+
+  it("preserves typed audio while sanitizing mixed prompt media", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-native-mixed-media-"));
+    const audio = { type: "audio" as const, data: "not-an-image", mimeType: "audio/ogg" };
+
+    try {
+      const result = await detectAndLoadPromptImages({
+        prompt: "describe the attachments",
+        workspaceDir: stateDir,
+        model: { input: ["text", "image", "audio"] },
+        existingImages: [{ type: "image", data: "not-valid-base64", mimeType: "image/png" }, audio],
+      });
+
+      expect(result.images).toEqual([audio]);
+    } finally {
+      await fs.rm(stateDir, { recursive: true, force: true });
+    }
   });
 
   it("skips generated media-note refs already supplied inline", async () => {

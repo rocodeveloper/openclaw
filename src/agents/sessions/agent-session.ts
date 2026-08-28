@@ -28,6 +28,7 @@ import { CURRENT_SESSION_VERSION } from "../../config/sessions/version.js";
 import { streamSimple } from "../../llm/stream.js";
 import type {
   AssistantMessage,
+  AudioContent,
   ImageContent,
   Message,
   Model,
@@ -273,7 +274,7 @@ export interface PromptOptions {
   /** Whether to expand file-based prompt templates (default: true) */
   expandPromptTemplates?: boolean;
   /** Image attachments */
-  images?: ImageContent[];
+  images?: Array<ImageContent | AudioContent>;
   /** When streaming, how to queue the message: "steer" (interrupt) or "followUp" (wait). Required if streaming. */
   streamingBehavior?: "steer" | "followUp";
   /** Source of input for extension input event handlers. Defaults to "interactive". */
@@ -1238,7 +1239,9 @@ export class AgentSession {
       messages = [];
 
       // Add user message
-      const userContent: (TextContent | ImageContent)[] = [{ type: "text", text: expandedText }];
+      const userContent: (TextContent | ImageContent | AudioContent)[] = [
+        { type: "text", text: expandedText },
+      ];
       if (currentImages) {
         userContent.push(...currentImages);
       }
@@ -1371,7 +1374,7 @@ export class AgentSession {
    */
   async steer(
     text: string,
-    images?: ImageContent[],
+    images?: Array<ImageContent | AudioContent>,
     userTurnTranscriptRecorder?: UserTurnTranscriptRecorder,
   ): Promise<void> {
     // Check for extension commands (cannot be queued)
@@ -1400,7 +1403,7 @@ export class AgentSession {
    * @param images Optional image attachments to include with the message
    * @throws Error if text is an extension command
    */
-  async followUp(text: string, images?: ImageContent[]): Promise<void> {
+  async followUp(text: string, images?: Array<ImageContent | AudioContent>): Promise<void> {
     // Check for extension commands (cannot be queued)
     if (text.startsWith("/")) {
       this.throwIfExtensionCommand(text);
@@ -1418,7 +1421,7 @@ export class AgentSession {
    */
   private async queueSteer(
     text: string,
-    images?: ImageContent[],
+    images?: Array<ImageContent | AudioContent>,
     transcriptContext?: {
       message: PersistedUserTurnMessage;
       recorder: UserTurnTranscriptRecorder;
@@ -1426,7 +1429,7 @@ export class AgentSession {
   ): Promise<void> {
     this.steeringMessages.push(text);
     this.emitQueueUpdate();
-    const content: (TextContent | ImageContent)[] = [{ type: "text", text }];
+    const content: (TextContent | ImageContent | AudioContent)[] = [{ type: "text", text }];
     if (images) {
       content.push(...images);
     }
@@ -1445,10 +1448,13 @@ export class AgentSession {
   /**
    * Internal: Queue a follow-up message (already expanded, no extension command check).
    */
-  private async queueFollowUp(text: string, images?: ImageContent[]): Promise<void> {
+  private async queueFollowUp(
+    text: string,
+    images?: Array<ImageContent | AudioContent>,
+  ): Promise<void> {
     this.followUpMessages.push(text);
     this.emitQueueUpdate();
-    const content: (TextContent | ImageContent)[] = [{ type: "text", text }];
+    const content: (TextContent | ImageContent | AudioContent)[] = [{ type: "text", text }];
     if (images) {
       content.push(...images);
     }
@@ -1529,12 +1535,12 @@ export class AgentSession {
    * @param options.deliverAs Delivery mode when streaming: "steer" or "followUp"
    */
   async sendUserMessage(
-    content: string | (TextContent | ImageContent)[],
+    content: string | (TextContent | ImageContent | AudioContent)[],
     options?: { deliverAs?: "steer" | "followUp" },
   ): Promise<void> {
     // Normalize content to text string + optional images
     let text: string;
-    let images: ImageContent[] | undefined;
+    let images: Array<ImageContent | AudioContent> | undefined;
 
     if (typeof content === "string") {
       text = content;

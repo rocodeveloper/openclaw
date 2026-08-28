@@ -25,6 +25,18 @@ describe("buildBeforeModelResolveAttachments", () => {
     ]);
   });
 
+  it("preserves mixed prompt media kinds for before_model_resolve attachments", () => {
+    expect(
+      buildBeforeModelResolveAttachments([
+        { type: "image", mimeType: "image/png" },
+        { type: "audio", mimeType: "audio/ogg" },
+      ]),
+    ).toEqual([
+      { kind: "image", mimeType: "image/png" },
+      { kind: "audio", mimeType: "audio/ogg" },
+    ]);
+  });
+
   it("omits attachments when there are no images", () => {
     expect(buildBeforeModelResolveAttachments(undefined)).toBeUndefined();
     expect(buildBeforeModelResolveAttachments([])).toBeUndefined();

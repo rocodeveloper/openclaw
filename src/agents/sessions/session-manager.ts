@@ -37,7 +37,7 @@ import {
   publishOwnedSessionFileSnapshot,
 } from "../../config/sessions/transcript-write-context.js";
 import { CURRENT_SESSION_VERSION } from "../../config/sessions/version.js";
-import type { ImageContent, Message, TextContent } from "../../llm/types.js";
+import type { AudioContent, ImageContent, Message, TextContent } from "../../llm/types.js";
 import { logWarn } from "../../logger.js";
 import { getAgentDir as getDefaultAgentDir, getSessionsDir } from "../config.js";
 import {
@@ -177,7 +177,7 @@ type PromptReleasedSessionMergeResult = {
 export interface CustomMessageEntry<T = unknown> extends SessionEntryBase {
   type: "custom_message";
   customType: string;
-  content: string | (TextContent | ImageContent)[];
+  content: string | (TextContent | ImageContent | AudioContent)[];
   details?: T;
   display: boolean;
 }
@@ -2526,7 +2526,7 @@ export class SessionManager {
    */
   appendCustomMessageEntry(
     customType: string,
-    content: string | (TextContent | ImageContent)[],
+    content: string | (TextContent | ImageContent | AudioContent)[],
     display: boolean,
     details?: unknown,
   ): string {

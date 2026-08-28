@@ -117,13 +117,13 @@ export async function resolveHookModelSelection(params: {
  * do not grow a meaningless attachments field.
  */
 export function buildBeforeModelResolveAttachments(
-  images: readonly { mimeType?: string }[] | undefined,
+  images: readonly { type?: "image" | "audio"; mimeType?: string }[] | undefined,
 ): PluginHookBeforeModelResolveAttachment[] | undefined {
   if (!images?.length) {
     return undefined;
   }
   return images.map((img) => ({
-    kind: "image",
+    kind: img.type ?? "image",
     mimeType: img.mimeType,
   }));
 }

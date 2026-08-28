@@ -24,7 +24,7 @@ import { resolveRuntimeOsLabel } from "../../infra/os-summary.js";
 import { privateFileStore } from "../../infra/private-file-store.js";
 import { tempWorkspace } from "../../infra/private-temp-workspace.js";
 import { resolvePreferredOpenClawTmpDir } from "../../infra/tmp-openclaw-dir.js";
-import type { ImageContent } from "../../llm/types.js";
+import type { AudioContent, ImageContent } from "../../llm/types.js";
 import type { PromptImageOrderEntry } from "../../media/prompt-image-order.js";
 import { listRegisteredPluginAgentPromptGuidance } from "../../plugins/command-registry-state.js";
 import type { BootstrapMode } from "../bootstrap-mode.js";
@@ -54,6 +54,10 @@ export {
 const CLI_RUN_QUEUE = new KeyedAsyncQueue();
 const CLI_IMAGE_SWEEP_TTL_MS = 7 * 24 * 60 * 60 * 1_000;
 const sweptCliImageRoots = new Set<string>();
+
+function isImageContent(content: ImageContent | AudioContent): content is ImageContent {
+  return content.type === "image";
+}
 
 function isClaudeCliProvider(providerId: string): boolean {
   return normalizeOptionalLowercaseString(providerId) === "claude-cli";
@@ -389,7 +393,7 @@ export async function loadPromptRefImages(params: {
       workspaceOnly: params.workspaceOnly,
       sandbox: params.sandbox,
     });
-    if (image) {
+    if (image?.type === "image") {
       images.push(image);
     }
   }
@@ -476,7 +480,7 @@ export async function prepareCliPromptImagePayload(params: {
             imageOrder: params.imageOrder,
             maxBytes: MAX_IMAGE_BYTES,
           })
-        ).images
+        ).images.filter(isImageContent)
       : params.images && params.images.length > 0
         ? params.images
         : await loadPromptRefImages({ prompt, workspaceDir: params.workspaceDir });

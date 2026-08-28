@@ -19,7 +19,7 @@ import {
 } from "../agents/embedded-agent-runner/runs.js";
 import type { SandboxFsBridge } from "../agents/sandbox/fs-bridge.js";
 import { formatToolDetail, resolveToolDisplay } from "../agents/tool-display.js";
-import type { ImageContent } from "../llm/types.js";
+import type { AudioContent, ImageContent } from "../llm/types.js";
 import { redactToolDetail } from "../logging/redact.js";
 import type { PromptImageOrderEntry } from "../media/prompt-image-order.js";
 import { truncateUtf16Safe } from "../utils.js";
@@ -237,14 +237,14 @@ export async function detectAndLoadAgentHarnessPromptImages(params: {
   prompt: string;
   workspaceDir: string;
   model: { input?: string[] };
-  existingImages?: ImageContent[];
+  existingImages?: Array<ImageContent | AudioContent>;
   imageOrder?: PromptImageOrderEntry[];
   config?: import("../config/types.openclaw.js").OpenClawConfig;
   workspaceOnly?: boolean;
   localRoots?: readonly string[];
   sandbox?: { root: string; bridge: SandboxFsBridge };
 }): Promise<{
-  images: ImageContent[];
+  images: Array<ImageContent | AudioContent>;
   detectedRefs: Array<{ raw: string; resolved: string; type: "path" | "media-uri" }>;
   loadedCount: number;
   skippedCount: number;

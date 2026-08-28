@@ -51,7 +51,9 @@ function makeAssistant(content: AssistantMessage["content"]): AgentMessage {
 
 function makeToolResult(
   content: Array<
-    { type: "text"; text: string } | { type: "image"; data: string; mimeType: string }
+    | { type: "text"; text: string }
+    | { type: "image"; data: string; mimeType: string }
+    | { type: "audio"; data: string; mimeType: string }
   >,
 ): AgentMessage {
   return {
@@ -105,6 +107,34 @@ function expectToolResultWasTrimmed(result: AgentMessage[]) {
 }
 
 describe("pruneContextMessages", () => {
+  it("replaces audio tool results during pruning", () => {
+    const audioResult = makeToolResult([
+      { type: "audio", data: "UklGRg==", mimeType: "audio/wav" },
+    ]);
+    const messages: AgentMessage[] = [
+      makeUser("hello"),
+      audioResult,
+      makeAssistant([{ type: "text", text: "done" }]),
+    ];
+
+    const result = pruneContextMessages({
+      messages,
+      settings: {
+        ...buildToolTrimSettings(),
+        softTrimRatio: 0,
+      },
+      ctx: CONTEXT_WINDOW_5K,
+      isToolPrunable: () => true,
+      contextWindowTokensOverride: 1,
+    });
+
+    expect(result).not.toBe(messages);
+    expect(result[1]).toMatchObject({
+      role: "toolResult",
+      content: [{ type: "text", text: "[audio removed during context pruning]" }],
+    });
+  });
+
   it("keeps assistant messages with malformed thinking blocks", () => {
     const messages: AgentMessage[] = [
       makeUser("hello"),

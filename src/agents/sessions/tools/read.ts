@@ -5,7 +5,7 @@ import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { toErrorObject } from "../../../infra/errors.js";
 import { decodeWindowsTextFileBuffer } from "../../../infra/windows-encoding.js";
-import type { ImageContent, Model, TextContent } from "../../../llm/types.js";
+import type { AudioContent, ImageContent, Model, TextContent } from "../../../llm/types.js";
 import {
   classifyMediaReferenceSource,
   normalizeMediaReferenceSource,
@@ -213,7 +213,7 @@ function formatCompactReadCall(
 
 function formatReadResult(
   args: ReadRenderArgs | undefined,
-  result: { content: (TextContent | ImageContent)[]; details?: ReadToolDetails },
+  result: { content: (TextContent | ImageContent | AudioContent)[]; details?: ReadToolDetails },
   options: ToolRenderResultOptions,
   theme: Theme,
   showImages: boolean,
@@ -273,7 +273,7 @@ export function createReadToolDefinition(
       void toolCallId;
       void onUpdate;
       return new Promise<{
-        content: (TextContent | ImageContent)[];
+        content: (TextContent | ImageContent | AudioContent)[];
         details: ReadToolDetails | undefined;
       }>((resolve, reject) => {
         if (signal?.aborted) {
@@ -298,7 +298,7 @@ export function createReadToolDefinition(
             const mimeType = ops.detectImageMimeType
               ? await ops.detectImageMimeType(absolutePath)
               : undefined;
-            let content: (TextContent | ImageContent)[];
+            let content: (TextContent | ImageContent | AudioContent)[];
             let details: ReadToolDetails | undefined;
             const nonVisionImageNote = getNonVisionImageNote(ctx?.model);
             if (mimeType) {

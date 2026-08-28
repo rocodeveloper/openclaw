@@ -5,7 +5,7 @@ import path from "node:path";
 import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
 import { formatErrorMessage } from "../../../infra/errors.js";
 import { assertNoWindowsNetworkPath, safeFileURLToPath } from "../../../infra/local-file-access.js";
-import type { ImageContent } from "../../../llm/types.js";
+import type { AudioContent, ImageContent } from "../../../llm/types.js";
 import { resolveMediaReferenceLocalPath } from "../../../media/media-reference.js";
 import type { PromptImageOrderEntry } from "../../../media/prompt-image-order.js";
 import { loadWebMedia } from "../../../media/web-media.js";
@@ -39,15 +39,7 @@ for (const ext of IMAGE_EXTENSION_NAMES) {
   IMAGE_EXTENSIONS.add(`.${ext}`);
 }
 
-const AUDIO_EXTENSION_NAMES = [
-  "ogg",
-  "mp3",
-  "wav",
-  "m4a",
-  "aac",
-  "flac",
-  "opus",
-] as const;
+const AUDIO_EXTENSION_NAMES = ["ogg", "mp3", "wav", "m4a", "aac", "flac", "opus"] as const;
 const AUDIO_EXTENSIONS = new Set<string>();
 for (const ext of AUDIO_EXTENSION_NAMES) {
   AUDIO_EXTENSIONS.add(`.${ext}`);
@@ -142,11 +134,11 @@ function isOpenClawCliImageCachePath(filePath: string): boolean {
  */
 export function mergePromptAttachmentImages(params: {
   imageOrder?: PromptImageOrderEntry[];
-  existingImages?: ImageContent[];
-  offloadedImages?: Array<ImageContent | null>;
-  promptRefImages?: ImageContent[];
-}): ImageContent[] {
-  const promptImages: ImageContent[] = [];
+  existingImages?: Array<ImageContent | AudioContent>;
+  offloadedImages?: Array<ImageContent | AudioContent | null>;
+  promptRefImages?: Array<ImageContent | AudioContent>;
+}): Array<ImageContent | AudioContent> {
+  const promptImages: Array<ImageContent | AudioContent> = [];
   const existingImages = params.existingImages ?? [];
   const offloadedImages = params.offloadedImages ?? [];
 
@@ -323,21 +315,16 @@ export function splitPromptAndAttachmentRefs(params: {
   return { promptRefs, attachmentRefs };
 }
 
-function isAudioContentBlock(block: ImageContent): boolean {
-  return normalizeLowercaseStringOrEmpty(block.mimeType).startsWith("audio/");
-}
-
 async function sanitizeImagesWithLog(
-  images: ImageContent[],
+  images: Array<ImageContent | AudioContent>,
   label: string,
   imageSanitization?: ImageSanitizationLimits,
-): Promise<ImageContent[]> {
-  // Keep audio outside image sanitization because the image decoder cannot read audio bytes.
-  const audioByIndex = new Map<number, ImageContent>();
+): Promise<Array<ImageContent | AudioContent>> {
+  const audioByIndex = new Map<number, AudioContent>();
   const imageBlocks: ImageContent[] = [];
   for (let i = 0; i < images.length; i++) {
     const block = images[i];
-    if (isAudioContentBlock(block)) {
+    if (block.type === "audio") {
       audioByIndex.set(i, block);
     } else {
       imageBlocks.push(block);
@@ -357,7 +344,7 @@ async function sanitizeImagesWithLog(
     return sanitized;
   }
 
-  const out: ImageContent[] = [];
+  const out: Array<ImageContent | AudioContent> = [];
   let sanitizedIdx = 0;
   for (let i = 0; i < images.length; i++) {
     const audio = audioByIndex.get(i);
@@ -530,7 +517,7 @@ export async function loadImageFromRef(
     localRoots?: readonly string[];
     sandbox?: { root: string; bridge: SandboxFsBridge };
   },
-): Promise<ImageContent | null> {
+): Promise<ImageContent | AudioContent | null> {
   try {
     let targetPath = ref.resolved;
 
@@ -581,10 +568,12 @@ export async function loadImageFromRef(
       return null;
     }
 
-    const mimeType =
-      media.contentType ?? (media.kind === "audio" ? "audio/ogg" : "image/jpeg");
+    const mimeType = media.contentType ?? (media.kind === "audio" ? "audio/ogg" : "image/jpeg");
     const data = media.buffer.toString("base64");
 
+    if (media.kind === "audio") {
+      return { type: "audio", data, mimeType };
+    }
     return { type: "image", data, mimeType };
   } catch (err) {
     // Log the actual error for debugging (size limits, network failures, etc.)
@@ -611,7 +600,7 @@ export async function detectAndLoadPromptImages(params: {
   prompt: string;
   workspaceDir: string;
   model: { input?: string[] };
-  existingImages?: ImageContent[];
+  existingImages?: Array<ImageContent | AudioContent>;
   imageOrder?: PromptImageOrderEntry[];
   maxBytes?: number;
   maxDimensionPx?: number;
@@ -620,7 +609,7 @@ export async function detectAndLoadPromptImages(params: {
   sandbox?: { root: string; bridge: SandboxFsBridge };
 }): Promise<{
   /** Images for the current prompt (existingImages + detected in current prompt) */
-  images: ImageContent[];
+  images: Array<ImageContent | AudioContent>;
   detectedRefs: DetectedImageRef[];
   loadedCount: number;
   skippedCount: number;
@@ -659,8 +648,8 @@ export async function detectAndLoadPromptImages(params: {
     imageOrder: params.imageOrder,
     existingImageCount: params.existingImages?.length,
   });
-  const promptRefImages: ImageContent[] = [];
-  const offloadedImages: Array<ImageContent | null> = [];
+  const promptRefImages: Array<ImageContent | AudioContent> = [];
+  const offloadedImages: Array<ImageContent | AudioContent | null> = [];
 
   let loadedCount = 0;
   let skippedCount = 0;

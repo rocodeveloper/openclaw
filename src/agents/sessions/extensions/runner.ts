@@ -3,7 +3,7 @@
  */
 
 import type { KeyId } from "@earendil-works/pi-tui";
-import type { ImageContent, Model } from "../../../llm/types.js";
+import type { AudioContent, ImageContent, Model } from "../../../llm/types.js";
 import { type Theme, theme } from "../../modes/interactive/theme/theme.js";
 import type { AgentMessage } from "../../runtime/index.js";
 import type { ResourceDiagnostic } from "../diagnostics.js";
@@ -981,7 +981,7 @@ export class ExtensionRunner {
 
   async emitBeforeAgentStart(
     prompt: string,
-    images: ImageContent[] | undefined,
+    images: Array<ImageContent | AudioContent> | undefined,
     systemPrompt: string,
     systemPromptOptions: BuildSystemPromptOptions,
   ): Promise<BeforeAgentStartCombinedResult | undefined> {
@@ -1106,7 +1106,7 @@ export class ExtensionRunner {
   /** Emit input event. Transforms chain, "handled" short-circuits. */
   async emitInput(
     text: string,
-    images: ImageContent[] | undefined,
+    images: Array<ImageContent | AudioContent> | undefined,
     source: InputSource,
   ): Promise<InputEventResult> {
     const ctx = this.createContext();

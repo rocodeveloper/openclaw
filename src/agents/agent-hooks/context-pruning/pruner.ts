@@ -1,5 +1,10 @@
 /** Context-pruning planner that trims old assistant/tool content under token pressure. */
-import type { ImageContent, TextContent, ToolResultMessage } from "../../../llm/types.js";
+import type {
+  AudioContent,
+  ImageContent,
+  TextContent,
+  ToolResultMessage,
+} from "../../../llm/types.js";
 import { CHARS_PER_TOKEN_ESTIMATE, estimateStringChars } from "../../../utils/cjk-chars.js";
 import { dropThinkingBlocks } from "../../embedded-agent-runner/thinking.js";
 import type { AgentMessage } from "../../runtime/index.js";
@@ -8,7 +13,9 @@ import type { EffectiveContextPruningSettings } from "./settings.js";
 import { makeToolPrunablePredicate } from "./tools.js";
 
 const IMAGE_CHAR_ESTIMATE = 8_000;
+const AUDIO_CHAR_ESTIMATE = 8_000;
 const PRUNED_CONTEXT_IMAGE_MARKER = "[image removed during context pruning]";
+const PRUNED_CONTEXT_AUDIO_MARKER = "[audio removed during context pruning]";
 
 function asText(text: string): TextContent {
   return { type: "text", text };
@@ -40,7 +47,15 @@ function isImageBlock(block: unknown): boolean {
   );
 }
 
-function collectTextSegments(content: ReadonlyArray<TextContent | ImageContent>): string[] {
+function isAudioBlock(block: unknown): boolean {
+  return (
+    Boolean(block) && typeof block === "object" && (block as { type?: unknown }).type === "audio"
+  );
+}
+
+function collectTextSegments(
+  content: ReadonlyArray<TextContent | ImageContent | AudioContent>,
+): string[] {
   const parts: string[] = [];
   for (const block of content) {
     const text = coerceTextBlock(block);
@@ -52,7 +67,7 @@ function collectTextSegments(content: ReadonlyArray<TextContent | ImageContent>)
 }
 
 function collectPrunableToolResultSegments(
-  content: ReadonlyArray<TextContent | ImageContent>,
+  content: ReadonlyArray<TextContent | ImageContent | AudioContent>,
 ): string[] {
   const parts: string[] = [];
   for (const block of content) {
@@ -63,6 +78,8 @@ function collectPrunableToolResultSegments(
     }
     if (isImageBlock(block)) {
       parts.push(PRUNED_CONTEXT_IMAGE_MARKER);
+    } else if (isAudioBlock(block)) {
+      parts.push(PRUNED_CONTEXT_AUDIO_MARKER);
     }
   }
   return parts;
@@ -131,9 +148,11 @@ function takeTailFromJoinedText(parts: string[], maxChars: number): string {
   return out.join("");
 }
 
-function hasImageBlocks(content: ReadonlyArray<TextContent | ImageContent>): boolean {
+function hasMediaBlocks(
+  content: ReadonlyArray<TextContent | ImageContent | AudioContent>,
+): boolean {
   for (const block of content) {
-    if (isImageBlock(block)) {
+    if (isImageBlock(block) || isAudioBlock(block)) {
       return true;
     }
   }
@@ -144,7 +163,9 @@ function estimateWeightedTextChars(text: string): number {
   return estimateStringChars(text);
 }
 
-function estimateTextAndImageChars(content: ReadonlyArray<TextContent | ImageContent>): number {
+function estimateTextAndMediaChars(
+  content: ReadonlyArray<TextContent | ImageContent | AudioContent>,
+): number {
   let chars = 0;
   for (const block of content) {
     const text = coerceTextBlock(block);
@@ -154,6 +175,8 @@ function estimateTextAndImageChars(content: ReadonlyArray<TextContent | ImageCon
     }
     if (isImageBlock(block)) {
       chars += IMAGE_CHAR_ESTIMATE;
+    } else if (isAudioBlock(block)) {
+      chars += AUDIO_CHAR_ESTIMATE;
     }
   }
   return chars;
@@ -165,7 +188,7 @@ function estimateMessageChars(message: AgentMessage): number {
     if (typeof content === "string") {
       return estimateWeightedTextChars(content);
     }
-    return estimateTextAndImageChars(content);
+    return estimateTextAndMediaChars(content);
   }
 
   if (message.role === "assistant") {
@@ -204,7 +227,7 @@ function estimateMessageChars(message: AgentMessage): number {
   }
 
   if (message.role === "toolResult") {
-    return estimateTextAndImageChars(message.content);
+    return estimateTextAndMediaChars(message.content);
   }
 
   return 256;
@@ -252,13 +275,13 @@ function softTrimToolResultMessage(params: {
   settings: EffectiveContextPruningSettings;
 }): ToolResultMessage | null {
   const { msg, settings } = params;
-  const hasImages = hasImageBlocks(msg.content);
-  const parts = hasImages
+  const hasMedia = hasMediaBlocks(msg.content);
+  const parts = hasMedia
     ? collectPrunableToolResultSegments(msg.content)
     : collectTextSegments(msg.content);
   const rawLen = estimateJoinedTextLength(parts);
   if (rawLen <= settings.softTrim.maxChars) {
-    if (!hasImages) {
+    if (!hasMedia) {
       return null;
     }
     return { ...msg, content: [asText(parts.join("\n"))] };
@@ -267,7 +290,7 @@ function softTrimToolResultMessage(params: {
   const headChars = Math.max(0, settings.softTrim.headChars);
   const tailChars = Math.max(0, settings.softTrim.tailChars);
   if (headChars + tailChars >= rawLen) {
-    if (!hasImages) {
+    if (!hasMedia) {
       return null;
     }
     return { ...msg, content: [asText(parts.join("\n"))] };

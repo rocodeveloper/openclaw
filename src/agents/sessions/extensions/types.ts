@@ -23,6 +23,7 @@ import type {
   Api,
   AssistantMessageEvent,
   AssistantMessageEventStreamContract,
+  AudioContent,
   Context,
   ImageContent,
   Model,
@@ -439,7 +440,7 @@ export interface ReplacedSessionContext extends ExtensionCommandContext {
   ): Promise<void>;
 
   sendUserMessage(
-    content: string | (TextContent | ImageContent)[],
+    content: string | (TextContent | ImageContent | AudioContent)[],
     options?: { deliverAs?: "steer" | "followUp" },
   ): Promise<void>;
 }
@@ -706,7 +707,7 @@ export interface BeforeAgentStartEvent {
   /** The raw user prompt text (after expansion). */
   prompt: string;
   /** Images attached to the user prompt, if any. */
-  images?: ImageContent[];
+  images?: Array<ImageContent | AudioContent>;
   /** The fully assembled system prompt string. */
   systemPrompt: string;
   /** Structured options used to build the system prompt. Extensions can inspect this without re-discovering resources. */
@@ -833,7 +834,7 @@ export interface InputEvent {
   /** The input text */
   text: string;
   /** Attached images, if any */
-  images?: ImageContent[];
+  images?: Array<ImageContent | AudioContent>;
   /** Where the input came from */
   source: InputSource;
 }
@@ -841,7 +842,7 @@ export interface InputEvent {
 /** Result from input event handler */
 export type InputEventResult =
   | { action: "continue" }
-  | { action: "transform"; text: string; images?: ImageContent[] }
+  | { action: "transform"; text: string; images?: Array<ImageContent | AudioContent> }
   | { action: "handled" };
 
 // ============================================================================
@@ -913,7 +914,7 @@ interface ToolResultEventBase {
   type: "tool_result";
   toolCallId: string;
   input: Record<string, unknown>;
-  content: (TextContent | ImageContent)[];
+  content: (TextContent | ImageContent | AudioContent)[];
   isError: boolean;
 }
 
@@ -1094,7 +1095,7 @@ export interface UserBashEventResult {
 }
 
 export interface ToolResultEventResult {
-  content?: (TextContent | ImageContent)[];
+  content?: (TextContent | ImageContent | AudioContent)[];
   details?: unknown;
   isError?: boolean;
 }
@@ -1300,7 +1301,7 @@ export interface ExtensionAPI {
    * When the agent is streaming, use deliverAs to specify how to queue the message.
    */
   sendUserMessage(
-    content: string | (TextContent | ImageContent)[],
+    content: string | (TextContent | ImageContent | AudioContent)[],
     options?: { deliverAs?: "steer" | "followUp" },
   ): void;
 
@@ -1527,7 +1528,7 @@ export type SendMessageHandler = <T = unknown>(
 ) => void;
 
 export type SendUserMessageHandler = (
-  content: string | (TextContent | ImageContent)[],
+  content: string | (TextContent | ImageContent | AudioContent)[],
   options?: { deliverAs?: "steer" | "followUp" },
 ) => void;
 
