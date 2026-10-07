@@ -24,11 +24,23 @@ function listHookMetadataFiles(rootDir: string, fsImpl: typeof fs) {
   return fsImpl
     .readdirSync(sourceRoot, { withFileTypes: true })
     .filter((entry) => entry.isDirectory())
-    .map((entry) => ({
-      source: path.join(sourceRoot, entry.name, "HOOK.md"),
-      target: path.join(rootDir, "dist", "bundled", entry.name, "HOOK.md"),
-    }))
-    .filter(({ source }) => fsImpl.existsSync(source));
+    .filter((entry) => fsImpl.existsSync(path.join(sourceRoot, entry.name, "HOOK.md")))
+    .flatMap((entry) =>
+      ["HOOK.md", ...listHookShellScripts(path.join(sourceRoot, entry.name), fsImpl)].map(
+        (fileName) => ({
+          source: path.join(sourceRoot, entry.name, fileName),
+          target: path.join(rootDir, "dist", "bundled", entry.name, fileName),
+        }),
+      ),
+    );
+}
+
+function listHookShellScripts(hookDir: string, fsImpl: typeof fs): string[] {
+  return fsImpl
+    .readdirSync(hookDir, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.endsWith(".sh"))
+    .map((entry) => entry.name)
+    .toSorted();
 }
 
 export function listHookMetadataOutputs(params: CopyHookMetadataParams = {}): string[] {
@@ -48,7 +60,10 @@ export function copyHookMetadata(params: CopyHookMetadataParams = {}): number {
     fsImpl.copyFileSync(source, target);
     copiedCount += 1;
     if (params.verbose) {
-      logVerboseCopy(context, `Copied ${path.basename(path.dirname(target))}/HOOK.md`);
+      logVerboseCopy(
+        context,
+        `Copied ${path.basename(path.dirname(target))}/${path.basename(target)}`,
+      );
     }
   }
   return copiedCount;
