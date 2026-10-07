@@ -126,8 +126,8 @@ describe("web monitor inbox metadata cache", () => {
 
       expect(sock.groupMetadata).not.toHaveBeenCalled();
       expect(sock.sendMessage).toHaveBeenCalledWith("123@g.us", {
-        text: "ping @277038292303944",
-        mentions: [participantLid],
+        text: "ping @+15551234567",
+        mentions: [participantPhone],
       });
     } finally {
       await listener.close();
@@ -200,6 +200,7 @@ describe("web monitor inbox metadata cache", () => {
       });
       expect(sock.sendMessage).toHaveBeenNthCalledWith(2, "123@g.us", {
         text: "expired @15551234567",
+        mentions: ["15551234567@s.whatsapp.net"],
       });
       expect(sock.groupMetadata).toHaveBeenCalledTimes(1);
       expect(baileysCache.baileysGroupMetaCache.has("123@g.us")).toBe(false);
@@ -234,6 +235,7 @@ describe("web monitor inbox metadata cache", () => {
       });
       expect(sock.sendMessage).toHaveBeenNthCalledWith(2, "123@g.us", {
         text: "after @15551234567",
+        mentions: ["15551234567@s.whatsapp.net"],
       });
       expect(sock.groupMetadata).toHaveBeenCalledTimes(1);
       expect(baileysCache.baileysGroupMetaCache.has("123@g.us")).toBe(false);

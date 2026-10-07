@@ -119,17 +119,17 @@ function participantValues(participant: WhatsAppOutboundMentionParticipant): {
   return typeof participant === "string" ? { id: participant } : participant;
 }
 
-function chooseMentionJid(participant: WhatsAppOutboundMentionParticipant): string | null {
+function choosePhoneJidBeforeLidForMention(
+  participant: WhatsAppOutboundMentionParticipant,
+): string | null {
   const values = participantValues(participant);
   const idJid = normalizeKnownUserJid(values.id ?? "");
   const lidJid = normalizeKnownUserJid(values.lid ?? "");
+  const phoneJid =
+    normalizeKnownUserJid(values.phoneNumber ?? "") ?? normalizeKnownUserJid(values.e164 ?? "");
+  const candidates = [idJid, lidJid, phoneJid];
   return (
-    (extractLidDigits(idJid) ? idJid : null) ??
-    (extractLidDigits(lidJid) ? lidJid : null) ??
-    idJid ??
-    lidJid ??
-    normalizeKnownUserJid(values.phoneNumber ?? "") ??
-    normalizeKnownUserJid(values.e164 ?? "")
+    candidates.find((jid) => jid && !extractLidDigits(jid)) ?? candidates.find(Boolean) ?? null
   );
 }
 
@@ -140,7 +140,7 @@ function buildMentionTargetMaps(participants: readonly WhatsAppOutboundMentionPa
   const byPhone = new Map<string, MentionTarget>();
   const byLid = new Map<string, MentionTarget>();
   for (const participant of participants) {
-    const mentionJid = chooseMentionJid(participant);
+    const mentionJid = choosePhoneJidBeforeLidForMention(participant);
     if (!mentionJid) {
       continue;
     }
@@ -180,17 +180,39 @@ function shouldSkipMentionAt(
   return Boolean((previous && /[\w@]/.test(previous)) || (next && /[\w@]/.test(next)));
 }
 
+function resolveOutboundMentionsByDirectMapping(text: string): WhatsAppOutboundMentionResolution {
+  const codeRanges = collectCodeRanges(text);
+  const mentionedJids: string[] = [];
+  const seen = new Set<string>();
+  for (const match of text.matchAll(OUTBOUND_MENTION_RE)) {
+    const token = match[0];
+    const start = match.index;
+    if (shouldSkipMentionAt(text, start, start + token.length, codeRanges)) {
+      continue;
+    }
+    const digits = (match[1] ?? "").replace(/\D/g, "");
+    if (digits.length < 10) {
+      continue;
+    }
+    const jid = `${digits}@s.whatsapp.net`;
+    if (!seen.has(jid)) {
+      seen.add(jid);
+      mentionedJids.push(jid);
+    }
+  }
+  return { text, mentionedJids };
+}
+
 export function resolveWhatsAppOutboundMentions(params: {
   chatJid: string;
   text: string;
   participants?: readonly WhatsAppOutboundMentionParticipant[];
 }): WhatsAppOutboundMentionResolution {
-  if (
-    !isWhatsAppGroupJid(params.chatJid) ||
-    !mayContainWhatsAppOutboundMention(params.text) ||
-    !params.participants?.length
-  ) {
+  if (!mayContainWhatsAppOutboundMention(params.text)) {
     return { text: params.text, mentionedJids: [] };
+  }
+  if (!isWhatsAppGroupJid(params.chatJid) || !params.participants?.length) {
+    return resolveOutboundMentionsByDirectMapping(params.text);
   }
 
   const { byPhone, byLid } = buildMentionTargetMaps(params.participants);

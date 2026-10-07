@@ -17,36 +17,30 @@ describe("resolveWhatsAppOutboundMentions", () => {
   });
 
   it.each([
-    { text: "ping @+5511976136970", expected: "ping @277038292303944" },
-    {
-      text: "literal \\` ping @+5511976136970",
-      expected: "literal \\` ping @277038292303944",
-    },
-    {
-      text: "literal \\\\\\` ping @+5511976136970",
-      expected: "literal \\\\\\` ping @277038292303944",
-    },
-    {
-      text: "inside ``notify ` @+5511976136970`` then @+5511976136970",
-      expected: "inside ``notify ` @+5511976136970`` then @277038292303944",
-    },
-  ])("rewrites visible phone-number mentions to LIDs: $text", ({ text, expected }) => {
-    expect(
-      resolveWhatsAppOutboundMentions({
-        chatJid: "120363000000000000@g.us",
+    { text: "ping @+15557654321" },
+    { text: "literal \\` ping @+15557654321" },
+    { text: "literal \\\\\\` ping @+15557654321" },
+    { text: "inside ``notify ` @+15557654321`` then @+15557654321" },
+  ])(
+    "keeps the phone token when a LID participant record carries a phoneNumber: $text",
+    ({ text }) => {
+      expect(
+        resolveWhatsAppOutboundMentions({
+          chatJid: "120363000000000000@g.us",
+          text,
+          participants: [
+            {
+              id: "277038292303944:2@lid",
+              phoneNumber: "15557654321@s.whatsapp.net",
+            },
+          ],
+        }),
+      ).toEqual({
         text,
-        participants: [
-          {
-            id: "277038292303944:2@lid",
-            phoneNumber: "5511976136970@s.whatsapp.net",
-          },
-        ],
-      }),
-    ).toEqual({
-      text: expected,
-      mentionedJids: ["277038292303944@lid"],
-    });
-  });
+        mentionedJids: ["15557654321@s.whatsapp.net"],
+      });
+    },
+  );
 
   it("uses resolved E.164 metadata when LID participant records omit phoneNumber", () => {
     expect(
@@ -61,12 +55,12 @@ describe("resolveWhatsAppOutboundMentions", () => {
         ],
       }),
     ).toEqual({
-      text: "ping @277038292303944",
-      mentionedJids: ["277038292303944@lid"],
+      text: "ping @15551234567",
+      mentionedJids: ["15551234567@s.whatsapp.net"],
     });
   });
 
-  it("prefers explicit LID metadata over a phone JID id", () => {
+  it("prefers a phone JID over explicit LID metadata and leaves the text alone", () => {
     expect(
       resolveWhatsAppOutboundMentions({
         chatJid: "120363000000000000@g.us",
@@ -79,8 +73,8 @@ describe("resolveWhatsAppOutboundMentions", () => {
         ],
       }),
     ).toEqual({
-      text: "ping @277038292303944 and @277038292303944",
-      mentionedJids: ["277038292303944@lid"],
+      text: "ping @15551234567 and @277038292303944",
+      mentionedJids: ["15551234567@s.whatsapp.net"],
     });
   });
 
@@ -97,35 +91,41 @@ describe("resolveWhatsAppOutboundMentions", () => {
     });
   });
 
-  it("applies LID rewrites by match position while skipping code spans", () => {
+  it("skips mentions inside inline code and fenced blocks", () => {
+    const text = [
+      "visible @+15551234567",
+      "`inline @+15559999999`",
+      "```",
+      "fenced @+15558888888",
+      "```",
+      "again @+15551234567",
+    ].join("\n");
     expect(
       resolveWhatsAppOutboundMentions({
         chatJid: "120363000000000000@g.us",
-        text: [
-          "visible @+5511976136970",
-          "`inline @+5511976136970`",
-          "```",
-          "fenced @+5511976136970",
-          "```",
-          "again @+5511976136970",
-        ].join("\n"),
+        text,
         participants: [
-          {
-            id: "277038292303944:9@lid",
-            phoneNumber: "5511976136970@s.whatsapp.net",
-          },
+          { id: "15551234567@s.whatsapp.net" },
+          { id: "15559999999@s.whatsapp.net" },
+          { id: "15558888888@s.whatsapp.net" },
         ],
       }),
     ).toEqual({
-      text: [
-        "visible @277038292303944",
-        "`inline @+5511976136970`",
-        "```",
-        "fenced @+5511976136970",
-        "```",
-        "again @277038292303944",
-      ].join("\n"),
-      mentionedJids: ["277038292303944@lid"],
+      text,
+      mentionedJids: ["15551234567@s.whatsapp.net"],
+    });
+  });
+
+  it("applies LID rewrites by match position when only a LID is known", () => {
+    expect(
+      resolveWhatsAppOutboundMentions({
+        chatJid: "120363000000000000@g.us",
+        text: ["visible @+100000000000001", "`inline @+100000000000001`"].join("\n"),
+        participants: [{ id: "100000000000001:9@lid" }],
+      }),
+    ).toEqual({
+      text: ["visible @100000000000001", "`inline @+100000000000001`"].join("\n"),
+      mentionedJids: ["100000000000001@lid"],
     });
   });
 
@@ -166,14 +166,29 @@ describe("resolveWhatsAppOutboundMentions", () => {
     });
   });
 
-  it("does not add mention metadata for direct chats or unmatched group participants", () => {
+  it("direct-maps mentions for DMs and groups without a usable participant list", () => {
     expect(
       resolveWhatsAppOutboundMentions({
         chatJid: "15551234567@s.whatsapp.net",
         text: "hi @+15551234567",
         participants: [{ id: "15551234567@s.whatsapp.net" }],
       }),
-    ).toEqual({ text: "hi @+15551234567", mentionedJids: [] });
+    ).toEqual({
+      text: "hi @+15551234567",
+      mentionedJids: ["15551234567@s.whatsapp.net"],
+    });
+    expect(
+      resolveWhatsAppOutboundMentions({
+        chatJid: "120363000000000001@g.us",
+        text: "Reminder @15551234567: do the thing",
+      }),
+    ).toEqual({
+      text: "Reminder @15551234567: do the thing",
+      mentionedJids: ["15551234567@s.whatsapp.net"],
+    });
+  });
+
+  it("does not add mention metadata for unmatched group participants", () => {
     expect(
       resolveWhatsAppOutboundMentions({
         chatJid: "120363000000000000@g.us",

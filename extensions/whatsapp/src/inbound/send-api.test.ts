@@ -286,18 +286,18 @@ describe("createWebSendApi", () => {
           text,
           participants: [
             {
-              id: "277038292303944:4@lid",
-              phoneNumber: "5511976136970@s.whatsapp.net",
+              id: "100000000000001:4@lid",
+              phoneNumber: "15551234567@s.whatsapp.net",
             },
           ],
         }),
     });
 
-    await api.sendMessage("120363000000000000@g.us", "ping @+5511976136970");
+    await api.sendMessage("120363000000000000@g.us", "ping @+15551234567");
 
     expect(sendMessage).toHaveBeenCalledWith("120363000000000000@g.us", {
-      text: "ping @277038292303944",
-      mentions: ["277038292303944@lid"],
+      text: "ping @+15551234567",
+      mentions: ["15551234567@s.whatsapp.net"],
     });
   });
 
@@ -407,15 +407,15 @@ describe("createWebSendApi", () => {
           text,
           participants: [
             {
-              id: "277038292303944:4@lid",
-              phoneNumber: "5511976136970@s.whatsapp.net",
+              id: "100000000000001:4@lid",
+              phoneNumber: "15551234567@s.whatsapp.net",
             },
           ],
         }),
     });
     const payload = Buffer.from("img");
 
-    await api.sendMessage("120363000000000000@g.us", "cap @+5511976136970", payload, "image/jpeg", {
+    await api.sendMessage("120363000000000000@g.us", "cap @+15551234567", payload, "image/jpeg", {
       asDocument: true,
       fileName: "promo.jpg",
     });
@@ -424,9 +424,9 @@ describe("createWebSendApi", () => {
     expectSendContentFields(0, {
       document: payload,
       fileName: "promo.jpg",
-      caption: "cap @277038292303944",
+      caption: "cap @+15551234567",
       mimetype: "image/jpeg",
-      mentions: ["277038292303944@lid"],
+      mentions: ["15551234567@s.whatsapp.net"],
     });
   });
 
