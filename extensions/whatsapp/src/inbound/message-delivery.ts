@@ -23,6 +23,7 @@ import {
   type WhatsAppReadReceiptTarget,
 } from "./durable-receive.js";
 import type { WhatsAppGroupMetadataCacheOwner } from "./group-metadata-cache.js";
+import { replaceMentionIdsWithPhoneNumbers } from "./inbound-mentions.js";
 import {
   createWhatsAppInboundMessageDebouncer,
   type WhatsAppQueuedInboundMessage,
@@ -268,16 +269,27 @@ export function createWhatsAppMessageDeliveryCoordinator(options: WhatsAppMessag
     const timestamp = inbound.messageTimestampMs;
     const mentionedJids = enriched.mentionedJids;
     const senderName = msg.pushName ?? undefined;
+    const body = await replaceMentionIdsWithPhoneNumbers({
+      body: enriched.body,
+      mentionedJids,
+      resolveInboundJid,
+    });
 
     inboundLogger.info(
       {
         from: inbound.from,
         to: self.e164 ?? "me",
-        body: enriched.body,
+        body,
         mediaPath: enriched.mediaPath,
         mediaType: enriched.mediaType,
         mediaFileName: enriched.mediaFileName,
         timestamp,
+        senderE164: inbound.senderE164 ?? undefined,
+        senderName,
+        senderJid: inbound.participantJid,
+        replyToId: enriched.replyContext?.id,
+        replyToBody: enriched.replyContext?.body,
+        messageId: inbound.id,
       },
       "inbound message",
     );
@@ -315,7 +327,7 @@ export function createWhatsAppMessageDeliveryCoordinator(options: WhatsAppMessag
         timestamp,
       },
       payload: {
-        body: enriched.body,
+        body,
         commandBody: enriched.commandBody,
         location: enriched.location ?? undefined,
         channelStructuredContext:
