@@ -7,6 +7,7 @@ import {
 } from "openclaw/plugin-sdk/channel-send-result";
 import { sendTextMediaPayload } from "openclaw/plugin-sdk/reply-payload";
 import { resolveDefaultWhatsAppAccountId } from "./account-ids.js";
+import { isWhatsAppGroupJid } from "./normalize-target.js";
 import {
   normalizeWhatsAppOutboundPayload,
   normalizeWhatsAppPayloadText,
@@ -60,6 +61,10 @@ export function createWhatsAppOutboundBase({
     }
     const targetJid = toWhatsappJid(params.to);
     const cachedMeta = lookupInboundMessageMetaForTarget(params.accountId, targetJid, replyToId);
+    const quotedGroupSenderKnown = Boolean(cachedMeta?.participant || cachedMeta?.fromMe);
+    if (isWhatsAppGroupJid(targetJid) && !quotedGroupSenderKnown) {
+      return undefined;
+    }
     return {
       id: replyToId,
       remoteJid: cachedMeta?.remoteJid ?? targetJid,

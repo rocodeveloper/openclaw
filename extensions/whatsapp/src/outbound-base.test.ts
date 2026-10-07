@@ -414,6 +414,40 @@ describe("createWhatsAppOutboundBase", () => {
     );
   });
 
+  it.each([
+    { name: "has no cached metadata", cache: undefined, quoted: false },
+    { name: "has no participant", cache: { body: "earlier" }, quoted: false },
+    {
+      name: "has a participant",
+      cache: { participant: "15551234567@s.whatsapp.net", body: "earlier" },
+      quoted: true,
+    },
+    { name: "was sent by this account", cache: { fromMe: true, body: "earlier" }, quoted: true },
+  ])(
+    "quotes a group reply only when the quoted message $name and its sender is known",
+    async ({ cache, quoted }) => {
+      const groupJid = "120363000000000000@g.us";
+      const replyToId = `reply-group-${String(quoted)}-${cache ? Object.keys(cache).join("-") : "none"}`;
+      if (cache) {
+        cacheInboundMessageMeta("default", groupJid, replyToId, cache);
+      }
+      const sendMessageWhatsApp = vi.fn(async () => ({ messageId: "msg-group", toJid: groupJid }));
+      const outbound = createOutbound(sendMessageWhatsApp);
+
+      await outbound.sendText!({
+        cfg: {} as never,
+        to: groupJid,
+        text: "reply",
+        accountId: "default",
+        deps: { sendWhatsApp: sendMessageWhatsApp },
+        replyToId,
+      });
+
+      const options = sendMessageOptionsAt(sendMessageWhatsApp, 0, groupJid, "reply");
+      expect(options.quotedMessageKey !== undefined).toBe(quoted);
+    },
+  );
+
   it("returns a real platform identity for routed error payloads", async () => {
     const sendMessageWhatsApp = vi.fn(async () => ({
       messageId: "msg-error-1",
