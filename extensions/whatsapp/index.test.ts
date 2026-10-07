@@ -10,7 +10,12 @@ describe("whatsapp bundled entries", () => {
         "channels.whatsapp.accounts",
         "channels.whatsapp.selfChatMode",
       ],
-      noopPrefixes: ["channels.whatsapp", "messages.inbound", "messages.ackReactionScope"],
+      noopPrefixes: [
+        "channels.whatsapp.accounts.*.staffPause",
+        "channels.whatsapp",
+        "messages.inbound",
+        "messages.ackReactionScope",
+      ],
     });
   });
 });

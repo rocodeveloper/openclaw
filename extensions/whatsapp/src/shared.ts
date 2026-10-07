@@ -168,7 +168,12 @@ export function createWhatsAppPluginBase() {
         "channels.whatsapp.accounts",
         "channels.whatsapp.selfChatMode",
       ],
-      noopPrefixes: ["channels.whatsapp", "messages.inbound", "messages.ackReactionScope"],
+      noopPrefixes: [
+        "channels.whatsapp.accounts.*.staffPause",
+        "channels.whatsapp",
+        "messages.inbound",
+        "messages.ackReactionScope",
+      ],
     },
     gatewayMethodDescriptors: [{ name: "web.login.start" }, { name: "web.login.wait" }],
     configSchema: WhatsAppChannelConfigSchema,

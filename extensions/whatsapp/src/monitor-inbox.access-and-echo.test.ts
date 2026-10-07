@@ -100,6 +100,98 @@ async function expectOutboundDmSkipsPairing(params: {
 describe("web monitor inbox", () => {
   installWebMonitorInboxUnitTestHooks();
 
+  it("skips the agent for a direct chat after a staff message from the phone", async () => {
+    mockLoadConfig.mockReturnValue({
+      channels: { whatsapp: { allowFrom: ["*"], staffPause: { minutes: 30 } } },
+      messages: DEFAULT_MESSAGES_CFG,
+    });
+
+    const { onMessage, listener, sock } = await openInboxMonitor();
+
+    try {
+      sock.ev.emit("messages.upsert", {
+        type: "notify",
+        messages: [
+          {
+            key: { id: "staff-1", fromMe: true, remoteJid: "999@s.whatsapp.net" },
+            message: { conversation: "staff reply" },
+            messageTimestamp: nowSeconds(),
+          },
+        ],
+      });
+      await settleInboundWork();
+
+      sock.ev.emit(
+        "messages.upsert",
+        buildNotifyMessageUpsert({
+          id: "customer-during-pause",
+          remoteJid: "999@s.whatsapp.net",
+          text: "customer message during the pause",
+          timestamp: nowSeconds(),
+        }),
+      );
+      sock.ev.emit(
+        "messages.upsert",
+        buildNotifyMessageUpsert({
+          id: "other-chat",
+          remoteJid: "888@s.whatsapp.net",
+          text: "message in a chat without a pause",
+          timestamp: nowSeconds(),
+        }),
+      );
+      await waitForMessageCalls(onMessage, 1);
+      await settleInboundWork();
+
+      expect(onMessage).toHaveBeenCalledTimes(1);
+      expect(onMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          platform: expect.objectContaining({ senderE164: "+888" }),
+        }),
+      );
+    } finally {
+      await listener.close();
+    }
+  });
+
+  it("keeps the agent active after a staff message when the staff pause is not configured", async () => {
+    mockLoadConfig.mockReturnValue(createAllowListConfig(["*"]));
+
+    const { onMessage, listener, sock } = await openInboxMonitor();
+
+    try {
+      sock.ev.emit("messages.upsert", {
+        type: "notify",
+        messages: [
+          {
+            key: { id: "staff-off-1", fromMe: true, remoteJid: "999@s.whatsapp.net" },
+            message: { conversation: "staff reply" },
+            messageTimestamp: nowSeconds(),
+          },
+        ],
+      });
+      await settleInboundWork();
+
+      sock.ev.emit(
+        "messages.upsert",
+        buildNotifyMessageUpsert({
+          id: "customer-no-pause",
+          remoteJid: "999@s.whatsapp.net",
+          text: "customer message without a pause",
+          timestamp: nowSeconds(),
+        }),
+      );
+      await waitForMessageCalls(onMessage, 1);
+
+      expect(onMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          platform: expect.objectContaining({ senderE164: "+999" }),
+        }),
+      );
+    } finally {
+      await listener.close();
+    }
+  });
+
   it("allows messages from senders in allowFrom list", async () => {
     mockLoadConfig.mockReturnValue(createAllowListConfig(["+111", "+999"]));
 

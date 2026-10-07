@@ -24,6 +24,14 @@ export const whatsAppChannelConfigUiHints = {
     label: "WhatsApp Direct Chat Overrides",
     help: 'Per-conversation overrides keyed by WhatsApp DM id. Applied after a DM is already admitted by dmPolicy; "*" supplies a default without admitting anyone.',
   },
+  staffPause: {
+    label: "WhatsApp Staff Pause",
+    help: "Pause the agent in a direct chat after a staff member sends a message from the linked phone.",
+  },
+  "staffPause.minutes": {
+    label: "WhatsApp Staff Pause Minutes",
+    help: "Minutes to pause the agent in a direct chat after a message from the linked phone. Absent or 0 keeps the pause off; maximum 1440.",
+  },
   pluginHooks: {
     label: "WhatsApp Plugin Hooks",
     help: "Opt in to broadcasting inbound WhatsApp events to plugins. Payloads carry personal content, so only enable it for plugins you trust.",

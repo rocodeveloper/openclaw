@@ -431,6 +431,7 @@ export function installWebMonitorInboxUnitTestHooks() {
       resetWebInboundDedupe = inboundModule.resetWebInboundDedupe;
     }
     resetWebInboundDedupe();
+    (await import("./inbound/staff-pause.js")).resetStaffPauses();
     authDir = fsSync.mkdtempSync(path.join(os.tmpdir(), "openclaw-auth-"));
   });
 

@@ -9,6 +9,13 @@ import { hasInboundUserContent } from "./extract.js";
 import type { WhatsAppGroupMetadataCacheOwner } from "./group-metadata-cache.js";
 import { isJidGroup } from "./runtime-api.js";
 import type { WhatsAppAttachedSocketSession } from "./socket-session.js";
+import {
+  describeStaffPause,
+  getActiveStaffPauseEnd,
+  maskChatForLog,
+  recordStaffMessage,
+  resolveStaffPauseMinutes,
+} from "./staff-pause.js";
 
 export type WhatsAppNormalizedInboundMessage = {
   id?: string;
@@ -32,6 +39,7 @@ export function createWhatsAppInboundMessageNormalizer(options: {
   groupMetadata: WhatsAppGroupMetadataCacheOwner;
   parseTimestampSeconds: (value: unknown) => number | undefined;
   logVerbose: (message: string) => void;
+  logInfo: (message: string) => void;
 }) {
   const { socketSession, groupMetadata } = options;
   const shouldSkipRecentOutboundEcho = (msg: WAMessage): boolean => {
@@ -94,8 +102,10 @@ export function createWhatsAppInboundMessageNormalizer(options: {
     const messageTimestampSeconds = options.parseTimestampSeconds(msg.messageTimestamp);
     const messageTimestampMs =
       messageTimestampSeconds !== undefined ? messageTimestampSeconds * 1000 : undefined;
+    const accessCfg = options.loadConfig?.() ?? options.cfg;
+    const isFromMe = Boolean(msg.key?.fromMe);
     const access = await checkInboundAccessControl({
-      cfg: options.loadConfig?.() ?? options.cfg,
+      cfg: accessCfg,
       accountId: options.accountId,
       from,
       selfE164: socketSession.self.e164 ?? null,
@@ -103,7 +113,7 @@ export function createWhatsAppInboundMessageNormalizer(options: {
       senderJid: participantJid,
       group,
       pushName: msg.pushName ?? undefined,
-      isFromMe: Boolean(msg.key?.fromMe),
+      isFromMe,
       messageTimestampMs,
       connectedAtMs: socketSession.connectedAtMs,
       verbose: options.verbose,
@@ -114,7 +124,35 @@ export function createWhatsAppInboundMessageNormalizer(options: {
       remoteJid,
     });
     if (!access.allowed) {
+      if (!group && isFromMe && from !== socketSession.self.e164) {
+        const pauseMinutes = resolveStaffPauseMinutes({
+          cfg: accessCfg,
+          accountId: options.accountId,
+        });
+        const pauseEndsAt = recordStaffMessage({
+          accountId: options.accountId,
+          chat: from,
+          pauseMinutes,
+          sentAtMs: messageTimestampMs,
+        });
+        options.logInfo(
+          `staff message: account=${options.accountId} chat=${maskChatForLog(from)} ${describeStaffPause({ pauseMinutes, pauseEndsAt })}`,
+        );
+      }
       return null;
+    }
+    if (
+      !group &&
+      !isFromMe &&
+      resolveStaffPauseMinutes({ cfg: accessCfg, accountId: options.accountId }) > 0
+    ) {
+      const pauseEndsAt = getActiveStaffPauseEnd({ accountId: options.accountId, chat: from });
+      if (pauseEndsAt !== undefined) {
+        options.logInfo(
+          `staff pause active: account=${options.accountId} chat=${maskChatForLog(from)} until ${new Date(pauseEndsAt).toISOString()}, skipping agent`,
+        );
+        return null;
+      }
     }
 
     return {

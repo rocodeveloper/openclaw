@@ -35,6 +35,13 @@ const WhatsAppPluginHooksSchema = z
   .strict()
   .optional();
 
+const WhatsAppStaffPauseSchema = z
+  .object({
+    minutes: z.number().int().min(0).max(1440).optional(),
+  })
+  .strict()
+  .optional();
+
 const { accountShape, rootPolicyShape } = buildChannelAccountSchemaParts({
   omit: ["name"],
   allowFrom: z.array(z.string()).optional(),
@@ -53,6 +60,7 @@ const WhatsAppCommonShape = {
     reactionLevels: ["off", "ack", "minimal", "extensive"],
   }),
   pluginHooks: WhatsAppPluginHooksSchema,
+  staffPause: WhatsAppStaffPauseSchema,
 };
 
 const WhatsAppAccountSchema = z

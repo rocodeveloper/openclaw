@@ -290,7 +290,7 @@ describe("buildGatewayReloadPlan", () => {
     }),
     reload: {
       configPrefixes: ["web", "channels.whatsapp.accounts", "channels.whatsapp.selfChatMode"],
-      noopPrefixes: ["channels.whatsapp"],
+      noopPrefixes: ["channels.whatsapp.accounts.*.staffPause", "channels.whatsapp"],
     },
   };
   const mattermostPlugin: ChannelPlugin = {
@@ -418,6 +418,50 @@ describe("buildGatewayReloadPlan", () => {
   afterEach(() => {
     resetPluginRuntimeStateForTest();
     setActivePluginRegistry(emptyRegistry);
+  });
+
+  it("plans no channel restart when only a WhatsApp staffPause changes", () => {
+    const changedPaths = [
+      "channels.whatsapp.accounts.acct-a.staffPause.minutes",
+      "channels.whatsapp.accounts.acct-b.staffPause",
+      "channels.whatsapp.staffPause.minutes",
+    ];
+    const plan = buildGatewayReloadPlan(changedPaths);
+    expect(plan.restartGateway).toBe(false);
+    expect(plan.restartChannels).toEqual(new Set());
+    expect(plan.noopPaths).toEqual(changedPaths);
+  });
+
+  it("plans no channel restart for a config diff that only sets an account staffPause", () => {
+    const account = { authDir: "/tmp/agent/wa", dmPolicy: "open" as const, allowFrom: ["*"] };
+    const changedPaths = diffGatewayReloadPaths(
+      { channels: { whatsapp: { accounts: { "acct-a": account } } } },
+      {
+        channels: {
+          whatsapp: { accounts: { "acct-a": { ...account, staffPause: { minutes: 30 } } } },
+        },
+      },
+      listConfigReloadRefinementPrefixes(),
+    );
+    expect(changedPaths).toEqual(["channels.whatsapp.accounts.acct-a.staffPause"]);
+    const plan = buildGatewayReloadPlan(changedPaths);
+    expect(plan.restartGateway).toBe(false);
+    expect(plan.restartChannels).toEqual(new Set());
+  });
+
+  it.each([
+    [
+      "channels.whatsapp.accounts.acct-a.staffPause.minutes",
+      "channels.whatsapp.accounts.acct-a.dmPolicy",
+    ],
+    ["channels.whatsapp.accounts.acct-a"],
+    ["channels.whatsapp.accounts.acct-a.staffPauseExtra"],
+    ["channels.whatsapp.accounts.acct-a.groups.staffPause"],
+    ["channels.whatsapp.accounts"],
+  ])("still restarts WhatsApp for %s", (...changedPaths) => {
+    const plan = buildGatewayReloadPlan(changedPaths);
+    expect(plan.restartGateway).toBe(false);
+    expect(plan.restartChannels).toEqual(new Set(["whatsapp"]));
   });
 
   it.each(["unloaded", "undeclared"] as const)(
