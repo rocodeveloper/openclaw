@@ -1,0 +1,20 @@
+{
+  "id": "session-scope",
+  "categories": ["security"],
+  "name": "Session Scope",
+  "description": "Give gate its caller identity from the gateway session",
+  "activation": {
+    "onStartup": true
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "gateAgents": {
+        "type": "array",
+        "description": "Agent ids whose exec and bash calls get the GATE_* caller identity. Absent or empty means no agent is gated.",
+        "items": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}
