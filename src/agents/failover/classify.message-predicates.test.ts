@@ -135,6 +135,35 @@ describe("Google invalid API key errors (#114784)", () => {
     expect(isAuthErrorMessage("INVALID API KEYSTORE configuration")).toBe(false);
   });
 });
+describe("quota bill-outs without structured billing codes", () => {
+  it("matches Google and OpenAI plan and billing quota text", () => {
+    const google =
+      "Google Generative AI API error (429): You exceeded your current quota, " +
+      "please check your plan and billing details.";
+    const openai =
+      "429 You exceeded your current quota, please check your plan and billing details.";
+    expect(isBillingErrorMessage(google)).toBe(true);
+    expect(isBillingErrorMessage(openai)).toBe(true);
+    expect(classifyFailoverReason(google)).toBe("billing");
+  });
+
+  it("matches the monthly limit error name", () => {
+    expect(isBillingErrorMessage("MonthlyLimitError: limit reached")).toBe(true);
+  });
+
+  it("keeps transient per-minute exhaustion out of billing", () => {
+    expect(
+      isBillingErrorMessage(
+        "429 RESOURCE_EXHAUSTED: Resource has been exhausted (e.g. check quota).",
+      ),
+    ).toBe(false);
+    expect(
+      isBillingErrorMessage(
+        "Quota exceeded for quota metric 'GenerateContent requests per minute'.",
+      ),
+    ).toBe(false);
+  });
+});
 describe("Chinese provider overload messages", () => {
   const ZHIPU_OVERLOAD = "[1305][该模型当前访问量过大，请您稍后再试]";
 
