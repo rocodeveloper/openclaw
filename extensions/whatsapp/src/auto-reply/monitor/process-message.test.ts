@@ -406,6 +406,22 @@ describe("processMessage group system prompt wiring", () => {
     );
   });
 
+  it("strips leading bot mentions before detecting group slash commands", async () => {
+    resolvePolicyMock.mockReturnValue(makePolicy(makeAccount()));
+    isControlCommandMessageMock.mockReturnValue(true);
+    shouldComputeCommandAuthorizedMock.mockReturnValue(true);
+    const cfg = { messages: { groupChat: { mentionPatterns: ["@assistant"] } } };
+
+    await callProcessMessage({ cfg, msg: makeBaseMsg({ body: "@assistant /model" }) });
+
+    expect(shouldComputeCommandAuthorizedMock).toHaveBeenCalledWith("/model", cfg);
+    expect(isControlCommandMessageMock).toHaveBeenCalledWith("/model", cfg);
+    expect(mockCallArg(buildContextMock, "buildWhatsAppInboundContext")).toMatchObject({
+      command: { kind: "text-slash", authorization: { kind: "authorized" }, body: "/model" },
+      rawBody: "/model",
+    });
+  });
+
   it("passes pending group history from the history window into inbound context", async () => {
     resolvePolicyMock.mockReturnValue(makePolicy(makeAccount()));
     const groupHistories = new Map<string, unknown[]>([
