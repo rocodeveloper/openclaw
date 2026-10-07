@@ -202,9 +202,11 @@ describe("web monitor inbox socket lifecycle", () => {
     await inbound?.platform.reply("pong");
 
     expect(sleepWithAbortMock).toHaveBeenCalledWith(10, undefined);
-    expect(replacementSock.sendMessage).toHaveBeenCalledWith("999@s.whatsapp.net", {
-      text: "pong",
-    });
+    expect(replacementSock.sendMessage).toHaveBeenCalledWith(
+      "999@s.whatsapp.net",
+      { text: "pong" },
+      { messageId: expect.any(String) },
+    );
     expect(sock.sendMessage).not.toHaveBeenCalled();
 
     await listener.close();
@@ -226,16 +228,114 @@ describe("web monitor inbox socket lifecycle", () => {
 
     await inbound?.platform.reply("pong");
 
-    expect(sock.sendMessage).toHaveBeenNthCalledWith(1, "999@s.whatsapp.net", {
-      text: "pong",
-    });
-    expect(sock.sendMessage).toHaveBeenNthCalledWith(2, "999@s.whatsapp.net", {
-      text: "pong",
-    });
+    const firstMessageId = sock.sendMessage.mock.calls[0]?.[2]?.messageId;
+    expect(firstMessageId).toEqual(expect.any(String));
+    for (const call of [1, 2]) {
+      expect(sock.sendMessage).toHaveBeenNthCalledWith(
+        call,
+        "999@s.whatsapp.net",
+        { text: "pong" },
+        { messageId: firstMessageId },
+      );
+    }
     expect(socketRef.current).toBe(sock);
     expect(sleepWithAbortMock).toHaveBeenCalledTimes(1);
 
     await listener.close();
+  });
+
+  it("socket session retries on the replacement socket when the active socket closes during send", async () => {
+    const socketRef = createSocketRef();
+    const { listener, sock, inbound } = await primeInboundReplyHandle({
+      onMessage: vi.fn(async () => undefined),
+      socketRef,
+      upsertId: "disconnect-during-send",
+      retryPolicy: fastReconnectPolicy(2),
+    });
+    const replacementSock = {
+      sendMessage: vi.fn(async () => ({ key: { id: "after-reconnect" } })),
+      sendPresenceUpdate: vi.fn(async () => undefined),
+    };
+    sock.sendMessage.mockImplementationOnce(() => new Promise(() => {}));
+    sleepWithAbortMock.mockImplementationOnce(async () => {
+      socketRef.current = replacementSock as unknown as NonNullable<
+        InboxMonitorOptions["socketRef"]
+      >["current"];
+    });
+
+    try {
+      const replyPromise = inbound.platform.reply("pong");
+      await vi.waitFor(() => {
+        expect(sock.sendMessage).toHaveBeenCalledTimes(1);
+      });
+      sock.ev.emit("connection.update", {
+        connection: "close",
+        lastDisconnect: { error: { output: { statusCode: 408 } } },
+      });
+
+      await expect(replyPromise).resolves.toBeDefined();
+      const originalMessageId = sock.sendMessage.mock.calls[0]?.[2]?.messageId;
+      expect(originalMessageId).toEqual(expect.any(String));
+      expect(replacementSock.sendMessage).toHaveBeenCalledWith(
+        "999@s.whatsapp.net",
+        { text: "pong" },
+        { messageId: originalMessageId },
+      );
+      expect(sleepWithAbortMock).toHaveBeenCalledTimes(1);
+    } finally {
+      await listener.close();
+    }
+  });
+
+  it("socket session does not retry on the replacement socket when the original send later succeeds", async () => {
+    const socketRef = createSocketRef();
+    const { listener, sock, inbound } = await primeInboundReplyHandle({
+      onMessage: vi.fn(async () => undefined),
+      socketRef,
+      upsertId: "late-success-after-close",
+      retryPolicy: fastReconnectPolicy(2),
+    });
+    let resolveOriginal!: (value: { key: { id: string } }) => void;
+    let releaseRetryWait!: () => void;
+    const retryWait = new Promise<undefined>((resolve) => {
+      releaseRetryWait = () => resolve(undefined);
+    });
+    const replacementSock = {
+      sendMessage: vi.fn(async () => ({ key: { id: "replacement-should-not-send" } })),
+      sendPresenceUpdate: vi.fn(async () => undefined),
+    };
+    sock.sendMessage.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveOriginal = resolve;
+        }),
+    );
+    sleepWithAbortMock.mockImplementationOnce(async () => retryWait);
+
+    try {
+      const replyPromise = inbound.platform.reply("pong");
+      await vi.waitFor(() => {
+        expect(sock.sendMessage).toHaveBeenCalledTimes(1);
+      });
+      sock.ev.emit("connection.update", {
+        connection: "close",
+        lastDisconnect: { error: { output: { statusCode: 408 } } },
+      });
+      await vi.waitFor(() => {
+        expect(sleepWithAbortMock).toHaveBeenCalledTimes(1);
+      });
+      socketRef.current = replacementSock as unknown as NonNullable<
+        InboxMonitorOptions["socketRef"]
+      >["current"];
+      resolveOriginal({ key: { id: "original-accepted" } });
+      await settleInboundWork();
+      releaseRetryWait();
+      await expect(replyPromise).resolves.toMatchObject({ messageId: "original-accepted" });
+      expect(replacementSock.sendMessage).not.toHaveBeenCalled();
+    } finally {
+      releaseRetryWait();
+      await listener.close();
+    }
   });
 
   type ReachoutTimelockCase = {

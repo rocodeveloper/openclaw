@@ -7,6 +7,7 @@ import type {
   WAMessage,
   WASocket,
 } from "baileys";
+import { generateMessageIDV2 } from "baileys";
 import { PlatformMessageNotDispatchedError } from "openclaw/plugin-sdk/error-runtime";
 import { createDeferred } from "openclaw/plugin-sdk/extension-shared";
 import { readWebSelfIdentityForDecision, WhatsAppAuthUnstableError } from "../auth-store.js";
@@ -211,12 +212,19 @@ export async function createWhatsAppAttachedSocketSession(options: SocketSession
   const trackLateAcceptedSend = (jid: string, promise: Promise<WAMessage | undefined>) => {
     // The local send has failed terminally, but Baileys may still deliver it.
     // Track a late message id only to suppress the resulting self-echo.
-    void promise.then(
+    let settled = false;
+    const outcome = promise.then(
       (result) => {
+        settled = true;
         rememberOutboundMessage(jid, result);
+        return { type: "accepted" as const, result };
       },
-      () => {},
+      (error: unknown) => {
+        settled = true;
+        return { type: "failed" as const, error };
+      },
     );
+    return { outcome, isSettled: () => settled };
   };
 
   let reachoutTimeLock: ReachoutTimelockState | undefined;
@@ -317,18 +325,53 @@ export async function createWhatsAppAttachedSocketSession(options: SocketSession
     await assertCanSendToJid(jid, currentSock, { rememberReady: true });
   };
 
+  const raceSocketClose = async (
+    sendPromise: Promise<WAMessage | undefined>,
+    onClosedDuringSend: (pendingSend: Promise<WAMessage | undefined>) => void,
+  ) => {
+    let closedDuringSend = false;
+    const closed = onClose.then((reason): never => {
+      closedDuringSend = true;
+      const status = reason.status === undefined ? "" : ` (status ${reason.status})`;
+      throw new Error(`WhatsApp socket closed during send${status}: ${formatError(reason.error)}`);
+    });
+    try {
+      return await Promise.race([sendPromise, closed]);
+    } catch (error) {
+      if (closedDuringSend) {
+        onClosedDuringSend(sendPromise);
+      }
+      throw error;
+    }
+  };
+
   const sendTrackedMessage = async (
     jid: string,
     content: AnyMessageContent,
     sendOptions?: MiscMessageGenerationOptions,
   ) => {
     let lastError: unknown = new Error(RECONNECT_IN_PROGRESS_ERROR);
+    const retrySafeSendOptions =
+      sendOptions?.messageId !== undefined || shouldRetryDisconnect()
+        ? {
+            ...sendOptions,
+            messageId: sendOptions?.messageId ?? generateMessageIDV2(sock.user?.id),
+          }
+        : sendOptions;
+    let lateSend: ReturnType<typeof trackLateAcceptedSend> | undefined;
     for (let attempt = 1; ; attempt += 1) {
+      if (lateSend?.isSettled()) {
+        const outcome = await lateSend.outcome;
+        lateSend = undefined;
+        if (outcome.type === "accepted") {
+          return outcome.result;
+        }
+      }
       const currentSock = getCurrentSock();
       if (currentSock) {
         try {
           await assertCanSendToJid(jid, currentSock, { useVerifiedReady: true });
-          const result = await createWhatsAppSocketOperationTimeoutAdapter(
+          const sendPromise = createWhatsAppSocketOperationTimeoutAdapter(
             currentSock,
             sendOperationTimeoutMs,
             {
@@ -336,7 +379,12 @@ export async function createWhatsAppAttachedSocketSession(options: SocketSession
                 trackLateAcceptedSend(timedOutJid, promise);
               },
             },
-          ).sendMessage(jid, content, sendOptions);
+          ).sendMessage(jid, content, retrySafeSendOptions);
+          const result = await (currentSock === sock
+            ? raceSocketClose(sendPromise, (pendingSend) => {
+                lateSend = trackLateAcceptedSend(jid, pendingSend);
+              })
+            : sendPromise);
           rememberOutboundMessage(jid, result);
           return result;
         } catch (error) {
@@ -362,10 +410,21 @@ export async function createWhatsAppAttachedSocketSession(options: SocketSession
       options.logVerbose(
         `Waiting ${delayMs}ms for WhatsApp reconnect before retrying send to ${jid}: ${formatError(lastError)}`,
       );
-      try {
-        await sleepWithAbort(delayMs, options.disconnectRetryAbortSignal);
-      } catch {
+      const waited = await Promise.race([
+        lateSend?.outcome ?? new Promise<never>(() => {}),
+        sleepWithAbort(delayMs, options.disconnectRetryAbortSignal).then(
+          () => ({ type: "delay" as const }),
+          () => ({ type: "aborted" as const }),
+        ),
+      ]);
+      if (waited.type === "accepted") {
+        return waited.result;
+      }
+      if (waited.type === "aborted") {
         throw lastError;
+      }
+      if (waited.type === "failed") {
+        lateSend = undefined;
       }
     }
   };
