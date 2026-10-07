@@ -1,0 +1,67 @@
+{
+  "id": "wiki-group-mcp",
+  "categories": [
+    "integrations"
+  ],
+  "name": "Wiki Group MCP",
+  "description": "Group-scoped Wiki MCP access with owner-provisioned credentials",
+  "activation": {
+    "onStartup": true,
+    "onConfigPaths": [
+      "plugins.entries.wiki-group-mcp"
+    ]
+  },
+  "contracts": {
+    "tools": [
+      "wiki_mcp"
+    ]
+  },
+  "commandAliases": [
+    {
+      "name": "wiki"
+    }
+  ],
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "url": {
+        "type": "string",
+        "description": "Streamable HTTP MCP endpoint"
+      },
+      "allowedTools": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1
+        },
+        "uniqueItems": true,
+        "default": []
+      },
+      "authHeader": {
+        "type": "string",
+        "default": "Authorization"
+      },
+      "authScheme": {
+        "type": "string",
+        "default": "Bearer"
+      },
+      "timeoutMs": {
+        "type": "integer",
+        "minimum": 1000,
+        "maximum": 120000,
+        "default": 30000
+      },
+      "maxResponseChars": {
+        "type": "integer",
+        "minimum": 1000,
+        "maximum": 1000000,
+        "default": 100000
+      },
+      "credentialFile": {
+        "type": "string",
+        "description": "Token store path. Defaults to credentials/wiki-mcp-tokens.json in the OpenClaw state directory."
+      }
+    }
+  }
+}
