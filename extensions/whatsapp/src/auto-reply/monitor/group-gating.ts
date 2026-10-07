@@ -17,6 +17,7 @@ import type { MentionConfig } from "../mentions.js";
 import { buildMentionConfig, debugMention, resolveOwnerList } from "../mentions.js";
 import { stripMentionsForCommand } from "./commands.js";
 import { resolveGroupActivationFor } from "./group-activation.js";
+import { isUnregisterCommand } from "./group-auto-register.js";
 import {
   hasControlCommand,
   implicitMentionKindWhen,
@@ -139,6 +140,10 @@ export async function applyGroupGating(params: ApplyGroupGatingParams) {
     selfE164: self.e164 ?? null,
   });
   const conversationGroupPolicy = inboundPolicy.resolveConversationGroupPolicy(conversationId);
+  const baseMentionConfig = {
+    ...params.baseMentionConfig,
+    allowFrom: inboundPolicy.configuredAllowFrom,
+  };
   if (conversationGroupPolicy.allowlistEnabled && !conversationGroupPolicy.allowed) {
     const accountId = inboundPolicy.account.accountId;
     const warnKey = JSON.stringify([accountId, conversationId, "group registry"]);
@@ -152,7 +157,9 @@ export async function applyGroupGating(params: ApplyGroupGatingParams) {
     params.logVerbose(
       `Dropping message from unregistered WhatsApp group ${conversationId}. Add the group JID to channels.whatsapp.groups, or add "*" there to admit all groups. Sender authorization still applies.`,
     );
-    return { shouldProcess: false };
+    return isOwnerSender(baseMentionConfig, params.msg, params.authDir)
+      ? ({ shouldProcess: false, ownerGroupAction: "unregistered-group" } as const)
+      : ({ shouldProcess: false } as const);
   }
 
   noteGroupMember(
@@ -162,10 +169,6 @@ export async function applyGroupGating(params: ApplyGroupGatingParams) {
     sender.name ?? undefined,
   );
 
-  const baseMentionConfig = {
-    ...params.baseMentionConfig,
-    allowFrom: inboundPolicy.configuredAllowFrom,
-  };
   const mentionConfig = {
     ...buildMentionConfig(params.cfg, params.agentId, {
       provider: "whatsapp",
@@ -188,6 +191,9 @@ export async function applyGroupGating(params: ApplyGroupGatingParams) {
   );
   const activationCommand = parseActivationCommand(commandBody);
   const owner = isOwnerSender(baseMentionConfig, params.msg, params.authDir);
+  if (owner && isUnregisterCommand(commandBody)) {
+    return { shouldProcess: false, ownerGroupAction: "unregister" } as const;
+  }
   const shouldBypassMention = owner && hasControlCommand(commandBody, params.cfg);
 
   if (activationCommand.hasCommand && !owner) {

@@ -21,6 +21,10 @@ import { buildMentionConfig } from "../mentions.js";
 import { maybeSendAckReaction } from "./ack-reaction.js";
 import { hasWhatsAppAudioBody, transcribeWhatsAppAudioMessage } from "./audio-preflight.js";
 import { maybeBroadcastMessage } from "./broadcast.js";
+import {
+  handleOwnerGroupUnregister,
+  handleOwnerInUnregisteredGroup,
+} from "./group-auto-register.js";
 import { applyGroupGating } from "./group-gating.js";
 import type { GroupHistoryEntry } from "./inbound-context.js";
 import { updateLastRouteInBackground } from "./last-route.js";
@@ -305,6 +309,24 @@ export function createWebOnMessageHandler(params: {
       }
       if (!gating.shouldProcess) {
         await clearPreDispatchReaction();
+        const ownerGroupAction = "ownerGroupAction" in gating ? gating.ownerGroupAction : undefined;
+        if (ownerGroupAction === "unregistered-group") {
+          await handleOwnerInUnregisteredGroup({
+            msg,
+            conversationId,
+            accountId: route.accountId,
+            agentId: route.agentId,
+            logVerbose,
+          });
+        }
+        if (ownerGroupAction === "unregister") {
+          await handleOwnerGroupUnregister({
+            msg,
+            conversationId,
+            accountId: route.accountId,
+            logVerbose,
+          });
+        }
         return;
       }
     }
