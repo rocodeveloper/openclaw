@@ -15,7 +15,7 @@ import type { AgentRunAttemptFailureSource } from "../../agent-run-terminal-outc
 import type { subscribeEmbeddedAgentSession } from "../../embedded-agent-subscribe.js";
 import { wrapStreamFnTextTransforms } from "../../plugin-text-transforms.js";
 import { registerProviderStreamForModel } from "../../provider-stream.js";
-import type { AgentMessage } from "../../runtime/index.js";
+import type { AgentMessage, StreamFn } from "../../runtime/index.js";
 import type { SandboxContext } from "../../sandbox/types.js";
 import type { AgentSession, SessionManager, SettingsManager } from "../../sessions/index.js";
 import { withSessionManagerWrite } from "../../sessions/session-manager-write-admission.js";
@@ -63,6 +63,10 @@ import {
 import { selectCompactionTimeoutSnapshot } from "./compaction-timeout.js";
 import { materializeProviderContext } from "./images.js";
 import { wrapStreamFnWithMessageTransform } from "./message-transform-stream-wrapper.js";
+import {
+  resolveAttemptAudioDelivery,
+  wrapStreamFnWithProviderAudioTranscripts,
+} from "./provider-audio.js";
 import { wrapStreamFnWithProviderReviewContinuation } from "./provider-review-continuation.js";
 import type { EmbeddedRunAttemptParams, EmbeddedRunAttemptResult } from "./types.js";
 
@@ -475,32 +479,47 @@ export async function prepareEmbeddedAttemptTransport(input: {
     workspaceDir: input.workspaceDir,
     auth,
   });
+  const providerMediaOptions = {
+    workspaceDir: input.workspaceDir,
+    agentWorkspaceDir: attempt.workspaceDir,
+    workspaceOnly: input.workspaceOnly,
+    localRoots: input.workspaceOnly
+      ? undefined
+      : getAgentScopedMediaLocalRoots(attempt.config ?? {}, input.sessionAgentId),
+    sandbox:
+      input.sandbox?.enabled && input.sandbox.fsBridge
+        ? { root: input.sandbox.workspaceDir, bridge: input.sandbox.fsBridge }
+        : undefined,
+  };
+  const audioDelivery = resolveAttemptAudioDelivery({
+    cfg: attempt.config,
+    modelInput: attempt.model.input,
+    agentDir: input.agentDir,
+    workspaceDir: input.workspaceDir,
+  });
+  const nativeAudio = audioDelivery.kind === "native" ? audioDelivery.audio : undefined;
+  const wrapWithProviderMedia = (baseStreamFn: StreamFn, nativeVideo: boolean) =>
+    wrapStreamFnWithMessageTransform(
+      baseStreamFn,
+      (messages) => messages,
+      async ({ context, ...provider }) => {
+        assertRunCurrent?.();
+        const prepared = await materializeProviderContext({
+          ...provider,
+          ...providerMediaOptions,
+          context,
+          nativeVideo,
+          audio: nativeAudio,
+          onCurrentTurnImageFailure: input.onCurrentTurnImageFailure,
+        });
+        assertRunCurrent?.();
+        return prepared;
+      },
+    );
   const directProviderStreamFn = providerStreamFn
-    ? wrapStreamFnWithMessageTransform(
-        providerStreamFn,
-        (messages) => messages,
-        async ({ context, ...provider }) => {
-          assertRunCurrent?.();
-          const prepared = await materializeProviderContext({
-            ...provider,
-            context,
-            workspaceDir: input.workspaceDir,
-            agentWorkspaceDir: attempt.workspaceDir,
-            workspaceOnly: input.workspaceOnly,
-            localRoots: input.workspaceOnly
-              ? undefined
-              : getAgentScopedMediaLocalRoots(attempt.config ?? {}, input.sessionAgentId),
-            onCurrentTurnImageFailure: input.onCurrentTurnImageFailure,
-            sandbox:
-              input.sandbox?.enabled && input.sandbox.fsBridge
-                ? { root: input.sandbox.workspaceDir, bridge: input.sandbox.fsBridge }
-                : undefined,
-          });
-          assertRunCurrent?.();
-          return prepared;
-        },
-      )
+    ? wrapWithProviderMedia(providerStreamFn, true)
     : undefined;
+
   const transportApiKey = await resolveEmbeddedAgentApiKey({
     provider: attempt.model.provider,
     resolvedApiKey: attempt.resolvedApiKey,
@@ -523,7 +542,18 @@ export async function prepareEmbeddedAttemptTransport(input: {
     authStorage: attempt.authStorage,
     assertCurrent: assertRunCurrent,
   });
-  session.agent.streamFn = streamFn;
+  const needsDefaultNativeAudioMedia =
+    !providerStreamFn && nativeAudio !== undefined && attempt.model.api === "google-generative-ai";
+  session.agent.streamFn =
+    audioDelivery.kind === "provider-transcript"
+      ? wrapStreamFnWithProviderAudioTranscripts(
+          streamFn,
+          audioDelivery.transcribe,
+          providerMediaOptions,
+        )
+      : needsDefaultNativeAudioMedia
+        ? wrapWithProviderMedia(streamFn, false)
+        : streamFn;
   // Install inside provider/config wrappers so their full onPayload chain runs
   // before admission hashes the request body that the built-in transport sends.
   session.agent.streamFn = wrapStreamFnWithProviderPromptState({

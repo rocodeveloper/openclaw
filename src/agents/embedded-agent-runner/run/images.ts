@@ -1,6 +1,6 @@
 import path from "node:path";
 import { assertNoWindowsNetworkPath, safeFileURLToPath } from "@openclaw/fs-safe/advanced";
-import { MAX_VIDEO_BYTES } from "@openclaw/media-core/constants";
+import { MAX_AUDIO_BYTES, MAX_VIDEO_BYTES } from "@openclaw/media-core/constants";
 import { normalizeMimeType } from "@openclaw/media-core/mime";
 import { asNonArrayRecord } from "@openclaw/normalization-core/record-coerce";
 import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
@@ -14,6 +14,7 @@ import { redactSensitiveText } from "../../../logging/redact.js";
 import {
   attachRuntimePromptMediaFacts,
   isImageMediaFact,
+  resolveMediaFactKind,
   isVideoMediaFact,
   normalizeMediaFacts,
   readRuntimePromptImageOrder,
@@ -492,8 +493,15 @@ type PromptMediaOptions = {
   localRoots?: readonly string[];
   sandbox?: { root: string; bridge: SandboxFsBridge };
   provider?: boolean;
+  nativeVideo?: boolean;
+  audio?: ProviderAudioDelivery;
   signal?: AbortSignal;
   onCurrentTurnImageFailure?: (count: number) => void;
+};
+
+export type ProviderAudioDelivery = {
+  native: boolean;
+  transcribe: (fact: MediaFact, bytes: Buffer) => Promise<string | undefined>;
 };
 
 export function buildPromptImageFailureNotice(count: number): string {
@@ -548,6 +556,67 @@ async function materializeVideoFact(
   return { type: "video", data: loaded.buffer.toString("base64"), mimeType };
 }
 
+const AUDIO_OMISSION = {
+  unavailable: "(audio omitted: source unavailable)",
+  invalid: "(audio omitted: invalid audio MIME type)",
+  limit: "(audio omitted: native audio byte limit exceeded)",
+  untranscribed: "(audio omitted: transcript unavailable)",
+} as const;
+
+function isPendingAudioMediaFact(fact: MediaFact): boolean {
+  return resolveMediaFactKind(fact) === "audio" && fact.transcribed !== true;
+}
+
+function formatProviderAudioTranscript(transcript: string): string {
+  return `[Audio transcript]\n${transcript}`;
+}
+
+async function materializeAudioFact(
+  fact: MediaFact,
+  budget: { remaining: number },
+  options: Pick<
+    PromptMediaOptions,
+    "workspaceDir" | "workspaceOnly" | "localRoots" | "sandbox" | "signal"
+  >,
+  audio: ProviderAudioDelivery,
+): Promise<ModelInputContent> {
+  if (audio.native && (fact.sizeBytes ?? 0) > budget.remaining) {
+    return { type: "text", text: AUDIO_OMISSION.limit };
+  }
+  const ref = resolveMediaFactLocalRef(fact);
+  const loaded = ref
+    ? await loadMediaFromRef(ref, fact.workspaceDir ?? options.workspaceDir, {
+        label: "Native audio",
+        maxBytes: MAX_AUDIO_BYTES,
+        signal: options.signal,
+        workspaceOnly: options.workspaceOnly,
+        localRoots:
+          options.localRoots ?? (options.workspaceOnly ? [options.workspaceDir] : undefined),
+        sandbox: options.sandbox,
+      })
+    : null;
+  if (!loaded) {
+    return { type: "text", text: AUDIO_OMISSION.unavailable };
+  }
+  if (!audio.native) {
+    const transcript = await audio.transcribe(fact, loaded.buffer);
+    options.signal?.throwIfAborted();
+    return {
+      type: "text",
+      text: transcript ? formatProviderAudioTranscript(transcript) : AUDIO_OMISSION.untranscribed,
+    };
+  }
+  const mimeType = normalizeMimeType(loaded.contentType);
+  if (loaded.kind !== "audio" || !mimeType?.startsWith("audio/")) {
+    return { type: "text", text: AUDIO_OMISSION.invalid };
+  }
+  if (loaded.buffer.length > budget.remaining) {
+    return { type: "text", text: AUDIO_OMISSION.limit };
+  }
+  budget.remaining -= loaded.buffer.length;
+  return { type: "audio", data: loaded.buffer.toString("base64"), mimeType };
+}
+
 async function projectOrderedPromptMedia(params: {
   content: Array<TextContent | ImageContent>;
   media: MediaFact[];
@@ -555,13 +624,21 @@ async function projectOrderedPromptMedia(params: {
   imageFactIndexes: ImageFactIndex[];
   options: PromptMediaOptions;
   budget: { remaining: number };
+  audioBudget: { remaining: number };
 }): Promise<ModelInputContent[]> {
-  const generatedMarkers = new Set<string>(Object.values(VIDEO_OMISSION));
+  const generatedMarkers = new Set<string>([
+    ...Object.values(VIDEO_OMISSION),
+    ...Object.values(AUDIO_OMISSION),
+  ]);
   const projected: ModelInputContent[] = params.content.filter(
     (block): block is TextContent => block.type === "text" && !generatedMarkers.has(block.text),
   );
+  const audio = params.options.provider ? params.options.audio : undefined;
   // Hydration already resolved image order, including inline blocks with no managed fact.
-  if (!params.media.some(isVideoMediaFact)) {
+  if (
+    !params.media.some(isVideoMediaFact) &&
+    !(audio && params.media.some(isPendingAudioMediaFact))
+  ) {
     return [...projected, ...params.images];
   }
   const imagesByFact = new Map<number, ImageContent[]>();
@@ -579,10 +656,12 @@ async function projectOrderedPromptMedia(params: {
       projected.push(...(imagesByFact.get(factIndex) ?? []));
     } else if (isVideoMediaFact(fact)) {
       projected.push(
-        params.options.provider
+        params.options.provider && params.options.nativeVideo !== false
           ? await materializeVideoFact(fact, params.budget, params.options)
           : { type: "text", text: VIDEO_OMISSION.unsupported },
       );
+    } else if (audio && isPendingAudioMediaFact(fact)) {
+      projected.push(await materializeAudioFact(fact, params.audioBudget, params.options, audio));
     }
   }
   projected.push(...factlessImages);
@@ -596,6 +675,7 @@ async function materializePromptMediaMessages(
 ): Promise<AgentMessage[]> {
   let hydrated: AgentMessage[] | undefined;
   const videoBudget = { remaining: MAX_VIDEO_BYTES };
+  const audioBudget = { remaining: MAX_AUDIO_BYTES };
   const activeUserIndex = messages.findLastIndex((message) => message.role === "user");
   for (const [index, message] of messages.entries()) {
     if (message.role !== "user") {
@@ -635,6 +715,7 @@ async function materializePromptMediaMessages(
       imageFactIndexes: result.imageFactIndexes,
       options,
       budget: videoBudget,
+      audioBudget,
     });
     if (
       (options.provider || options.onCurrentTurnImageFailure) &&
@@ -683,6 +764,53 @@ async function materializePromptMediaMessages(
   return hydrated ?? messages;
 }
 
+/** Appends one transcript per pending audio fact for a model that cannot take audio input. */
+export async function appendProviderAudioTranscripts(
+  messages: AgentMessage[],
+  options: Omit<
+    PromptMediaOptions,
+    "provider" | "model" | "maxBytes" | "maxDimensionPx" | "audio"
+  > & {
+    transcribe: ProviderAudioDelivery["transcribe"];
+  },
+): Promise<AgentMessage[]> {
+  let transcribed: AgentMessage[] | undefined;
+  const audio: ProviderAudioDelivery = { native: false, transcribe: options.transcribe };
+  for (const [index, message] of messages.entries()) {
+    if (message.role !== "user") {
+      continue;
+    }
+    const runtimeMedia = readRuntimePromptMediaFacts(message);
+    const pendingAudio = (runtimeMedia ?? readPersistedMediaFacts(message) ?? []).filter(
+      isPendingAudioMediaFact,
+    );
+    if (pendingAudio.length === 0) {
+      continue;
+    }
+    const transcripts: TextContent[] = [];
+    for (const fact of pendingAudio) {
+      const block = await materializeAudioFact(fact, { remaining: 0 }, options, audio);
+      if (block.type === "text") {
+        transcripts.push(block);
+      }
+    }
+    const content = Array.isArray(message.content)
+      ? message.content
+      : [{ type: "text" as const, text: message.content }];
+    const nextMessage = { ...message, content: [...content, ...transcripts] } as AgentMessage;
+    if (runtimeMedia) {
+      attachRuntimePromptMediaFacts(
+        nextMessage,
+        runtimeMedia,
+        readRuntimePromptImageOrder(message),
+      );
+    }
+    transcribed ??= messages.slice();
+    transcribed[index] = nextMessage;
+  }
+  return transcribed ?? messages;
+}
+
 /** Hydrates non-enumerable facts carried by queued user turns before canonical replay. */
 export async function hydratePromptMediaMessages(
   messages: AgentMessage[],
@@ -705,6 +833,8 @@ export async function materializeProviderContext(
     localRoots: params.localRoots,
     sandbox: params.sandbox,
     provider: true,
+    nativeVideo: params.nativeVideo,
+    audio: params.audio,
     signal: params.signal,
     onCurrentTurnImageFailure: params.onCurrentTurnImageFailure,
   });
