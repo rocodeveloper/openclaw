@@ -4,7 +4,8 @@ export type * from "./types.js";
 export const PROVIDER_CONTEXT_HANDOFF: unique symbol = Symbol("providerContextHandoff");
 
 export type VideoContent = Omit<Llm.ImageContent, "type"> & { type: "video" };
-export type MediaContent = Llm.ImageContent | VideoContent;
+export type AudioContent = Omit<Llm.ImageContent, "type"> & { type: "audio" };
+export type MediaContent = Llm.ImageContent | VideoContent | AudioContent;
 export type ModelInputContent = Llm.TextContent | MediaContent;
 export type ProviderUserMessage = Omit<Llm.UserMessage, "content"> & {
   content: string | ModelInputContent[];

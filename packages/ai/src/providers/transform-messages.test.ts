@@ -190,6 +190,41 @@ describe("transformMessages", () => {
     expect(JSON.stringify(responses)).not.toContain(sentinel);
   });
 
+  it("omits audio on generic transports and keeps it for Google audio models", () => {
+    const sentinel = "audio-secret-sentinel";
+    const messages = [
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "voice" },
+          { type: "audio", data: sentinel, mimeType: "audio/ogg" },
+        ],
+        timestamp: 1,
+      },
+    ] satisfies ProviderMessage[];
+    const audioModel: ProviderModel<"openai-completions"> = {
+      ...model,
+      input: ["text", "image", "audio"],
+    };
+
+    const transformed = transformProviderMessages(messages, audioModel);
+
+    expect(transformed[0]?.content).toEqual([
+      { type: "text", text: "voice" },
+      { type: "text", text: "(audio omitted: provider does not support audio input)" },
+    ]);
+    expect(JSON.stringify(transformed)).not.toContain(sentinel);
+
+    const googleAudioModel = {
+      ...audioModel,
+      api: "google-generative-ai" as const,
+    } as ProviderModel<"google-generative-ai">;
+    expect(transformProviderMessages(messages, googleAudioModel)[0]?.content).toEqual([
+      { type: "text", text: "voice" },
+      { type: "audio", data: sentinel, mimeType: "audio/ogg" },
+    ]);
+  });
+
   it("preserves structured tool blocks while projecting only real images", () => {
     const resource = { type: "resource", uri: "file:///tmp/result.json" };
     const metadata = { type: "metadata", value: { count: 2 } };
