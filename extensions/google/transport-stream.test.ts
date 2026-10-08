@@ -3315,6 +3315,38 @@ describe("google transport stream", () => {
     },
   );
 
+  it("sends native audio as inline data for a custom AI Studio provider", () => {
+    const params = buildGoogleGenerativeAiParams(
+      buildGeminiModel({
+        id: "gemini-3.5-flash-lite",
+        provider: "google-customer",
+        input: ["text", "image", "audio"] as never,
+      }),
+      {
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: "[media attached: /tmp/agent/voice.ogg (audio/ogg)]" },
+              { type: "audio", data: "ogg-bytes", mimeType: "audio/ogg" },
+            ],
+            timestamp: 0,
+          },
+        ],
+      } as never,
+    );
+
+    expect(params.contents).toEqual([
+      {
+        role: "user",
+        parts: [
+          { text: "[media attached: /tmp/agent/voice.ogg (audio/ogg)]" },
+          { inlineData: { mimeType: "audio/ogg", data: "ogg-bytes" } },
+        ],
+      },
+    ]);
+  });
+
   it.each(["google/gemini-3.1-pro-preview", "models/gemini-3.1-pro-preview"])(
     "keeps image parts inside function responses for prefixed Gemini 3 model %s",
     (modelId) => {

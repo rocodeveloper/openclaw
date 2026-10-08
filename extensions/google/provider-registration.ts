@@ -23,16 +23,25 @@ import {
   createGoogleVertexTransportStreamFn,
 } from "./transport-stream.js";
 
-function normalizeGoogleVideoInput(
+function normalizeGoogleMediaInput(
   ctx: Parameters<NonNullable<ProviderPlugin["normalizeResolvedModel"]>>[0],
 ) {
-  const input = (ctx.model.input as string[]).filter((type) => type !== "video");
-  const supportsVideo =
-    ctx.provider === "google" &&
+  const input = (ctx.model.input as string[]).filter(
+    (type) => type !== "video" && type !== "audio",
+  );
+  const isAiStudioGeminiRoute =
     ctx.model.api === "google-generative-ai" &&
     isOfficialGoogleAiStudioBaseUrl(ctx.model.baseUrl) &&
     isGoogleNativeVideoModelId(ctx.modelId);
-  return { ...ctx.model, input: supportsVideo ? [...input, "video"] : input } as typeof ctx.model;
+  const supportsVideo = isAiStudioGeminiRoute && ctx.provider === "google";
+  return {
+    ...ctx.model,
+    input: [
+      ...input,
+      ...(supportsVideo ? ["video"] : []),
+      ...(isAiStudioGeminiRoute ? ["audio"] : []),
+    ],
+  } as typeof ctx.model;
 }
 
 function resolveGoogleReasoningOutputMode(
@@ -113,7 +122,7 @@ export function buildGoogleProvider(): ProviderPlugin {
       },
     },
     normalizeModelId: ({ modelId }) => normalizeGoogleModelId(modelId),
-    normalizeResolvedModel: normalizeGoogleVideoInput,
+    normalizeResolvedModel: normalizeGoogleMediaInput,
     resolveDynamicModel: (ctx) =>
       resolveGoogleGeminiForwardCompatModel({
         providerId: ctx.provider,

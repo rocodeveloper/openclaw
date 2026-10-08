@@ -33,7 +33,7 @@ function readGoogleLiveModels(body: unknown): readonly unknown[] {
 
 function googleLiveModelInput(id: string): ModelDefinitionConfig["input"] {
   if (!id.startsWith("gemma-")) {
-    return ["text", "image", "video"];
+    return ["text", "image", "video", "audio"];
   }
   const isMultimodalGemma =
     /^gemma-3-(?:4b|12b|27b)(?:-|$)/.test(id) ||

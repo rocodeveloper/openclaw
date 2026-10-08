@@ -109,6 +109,34 @@ describe("buildGoogleProvider createStreamFn", () => {
     }
   });
 
+  it.each([
+    ["google", "gemini-3.5-flash-lite", "https://generativelanguage.googleapis.com/v1beta", true],
+    ["google2", "gemini-3.1-flash-lite-preview", "https://generativelanguage.googleapis.com", true],
+    ["google-customer", "gemini-3.1-flash-lite", "https://generativelanguage.googleapis.com", true],
+    ["google-customer", "gemma-4-26b-a4b-it", "https://generativelanguage.googleapis.com", false],
+    ["google2", "gemini-2.5-flash", "https://proxy.example.test/v1beta", false],
+  ])(
+    "marks native audio input for %s/%s on the AI Studio transport",
+    (providerId, modelId, baseUrl, expected) => {
+      const normalized = buildGoogleProvider().normalizeResolvedModel?.({
+        provider: providerId,
+        modelId,
+        model: model({
+          id: modelId,
+          provider: providerId,
+          api: "google-generative-ai",
+          baseUrl,
+          input: ["text", "image", "audio"] as never,
+        }),
+      } as never);
+
+      expect(((normalized?.input ?? []) as string[]).includes("audio")).toBe(expected);
+      expect(((normalized?.input ?? []) as string[]).includes("video")).toBe(
+        expected && providerId === "google",
+      );
+    },
+  );
+
   it.each(["google-vertex"])(
     "does not resolve AI Studio credentials for %s-only catalog scope",
     async (providerId) => {

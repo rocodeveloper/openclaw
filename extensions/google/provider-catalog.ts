@@ -33,7 +33,7 @@ export function buildGoogleStaticCatalogProvider(): ModelProviderConfig {
     ...GOOGLE_GEMINI_MANIFEST_PROVIDER,
     models: GOOGLE_GEMINI_TEXT_MODELS.map((model) => ({
       ...model,
-      input: [...model.input, "video"],
+      input: [...model.input, "video", "audio"],
     })),
   };
 }
