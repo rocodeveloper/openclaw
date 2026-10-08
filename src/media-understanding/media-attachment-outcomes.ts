@@ -15,6 +15,7 @@ export function renderMediaAttachmentDisposition(
   switch (disposition.kind) {
     case "handled":
     case "handed-to-native-vision":
+    case "handed-to-native-audio":
       return null;
     case "not-selected":
       return `[${label} attachment not processed: attachment limit reached]`;

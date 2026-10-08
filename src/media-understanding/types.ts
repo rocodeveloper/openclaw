@@ -46,6 +46,7 @@ type MediaUnderstandingAttachmentDecision = {
 export type MediaAttachmentDisposition =
   | { kind: "handled" }
   | { kind: "handed-to-native-vision" }
+  | { kind: "handed-to-native-audio" }
   | { kind: "not-selected" }
   | { kind: "capability-disabled" }
   | { kind: "no-model" }

@@ -94,6 +94,16 @@ const loadHasAvailableAuthForProvider = createLazyRuntimeNamedExport(
   "hasAvailableAuthForProvider",
 );
 
+const loadResolvePreTurnAudioPlan = createLazyRuntimeNamedExport(
+  () => import("../agents/model-audio-input.js"),
+  "resolvePreTurnAudioPlan",
+);
+
+const loadPrimeAudioTranscript = createLazyRuntimeNamedExport(
+  () => import("./provider-audio-transcript.js"),
+  "primeAudioTranscript",
+);
+
 const loadPreparedModelCatalogApi = createLazyRuntimeModule(async () => ({
   ...(await import("../agents/model-catalog.js")),
   ...(await import("../agents/prepared-model-catalog.js")),
@@ -772,7 +782,10 @@ export async function runCapability(params: {
   });
   const rendersMarker = (dispositions: Record<number, MediaAttachmentDisposition>) =>
     Object.values(dispositions).some(
-      (d) => d.kind !== "handled" && d.kind !== "handed-to-native-vision",
+      (d) =>
+        d.kind !== "handled" &&
+        d.kind !== "handed-to-native-vision" &&
+        d.kind !== "handed-to-native-audio",
     );
   const buildDecision = async (
     outcome: MediaUnderstandingDecision["outcome"],
@@ -829,6 +842,58 @@ export async function runCapability(params: {
         buildDispositions({ kind: "scope-denied" }),
       ),
     };
+  }
+
+  if (capability === "audio" && activeProvider) {
+    const audioPlan = await (
+      await loadResolvePreTurnAudioPlan()
+    )({
+      cfg,
+      ...(params.agentId ? { agentId: params.agentId } : {}),
+      ...(params.agentDir ? { agentDir: params.agentDir } : {}),
+      ...(params.workspaceDir ? { workspaceDir: params.workspaceDir } : {}),
+      activeModel: params.activeModel,
+    }).catch(() => "transcribe" as const);
+    if (audioPlan !== "transcribe") {
+      if (shouldLogVerbose()) {
+        logVerbose(
+          `Deferring audio transcription: primary model takes native audio (${audioPlan})`,
+        );
+      }
+      if (audioPlan === "prime") {
+        const primeAudioTranscript = await loadPrimeAudioTranscript();
+        for (const item of selection.selected) {
+          if (item.path) {
+            void primeAudioTranscript({
+              path: item.path,
+              ...(item.mime ? { contentType: item.mime } : {}),
+              ...(item.workspaceDir ? { workspaceDir: item.workspaceDir } : {}),
+              cfg,
+              ...(params.agentDir ? { agentDir: params.agentDir } : {}),
+            }).catch(() => undefined);
+          }
+        }
+      }
+      const attempt = {
+        type: "provider" as const,
+        provider: activeProvider,
+        model: params.activeModel?.model?.trim() || undefined,
+        outcome: "skipped" as const,
+        reason: "primary model takes audio natively",
+      };
+      return {
+        outputs: [],
+        decision: await buildDecision(
+          "skipped",
+          selection.selected.map((item) => ({
+            attachmentIndex: item.index,
+            attempts: [attempt],
+            chosen: attempt,
+          })),
+          buildDispositions({ kind: "handed-to-native-audio" }, { kind: "not-selected" }),
+        ),
+      };
+    }
   }
 
   // Skip image understanding when the primary model supports vision natively.
