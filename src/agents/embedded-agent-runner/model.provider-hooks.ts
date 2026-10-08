@@ -32,6 +32,8 @@ export { resolveProviderTransport } from "./model.provider-transport.js";
 let targetProviderRuntimeHooks: ProviderRuntimeHooks | undefined;
 let defaultProviderRuntimeHooks: ProviderRuntimeHooks | undefined;
 
+const GOOGLE_NATIVE_AUDIO_API = "google-generative-ai";
+
 const STATIC_PROVIDER_RUNTIME_HOOKS: ProviderRuntimeHooks = {
   applyProviderResolvedTransportWithPlugin: () => undefined,
   buildProviderUnknownModelHintWithPlugin: () => undefined,
@@ -168,14 +170,18 @@ export function normalizeResolvedModel(params: {
     return { ...cost, input, output, cacheRead, cacheWrite };
   };
 
+  const resolvedInput = resolveProviderModelInput({
+    provider: params.provider,
+    modelId: params.model.id,
+    modelName: params.model.name,
+    input: params.model.input,
+  });
   const normalizedInputModel = {
     ...params.model,
-    input: resolveProviderModelInput({
-      provider: params.provider,
-      modelId: params.model.id,
-      modelName: params.model.name,
-      input: params.model.input,
-    }),
+    input:
+      params.model.api === GOOGLE_NATIVE_AUDIO_API
+        ? resolvedInput
+        : resolvedInput.filter((type) => (type as string) !== "audio"),
     cost: normalizeModelCost(params.model.cost),
   } as Model & ProviderRuntimeModel;
   const runtimeHooks = params.runtimeHooks ?? resolveRuntimeHooks();

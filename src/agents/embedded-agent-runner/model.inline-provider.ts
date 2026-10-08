@@ -120,7 +120,9 @@ export function resolveProviderModelInput(params: {
 }): Array<"text" | "image"> {
   const resolvedInput = Array.isArray(params.input) ? params.input : params.fallbackInput;
   const normalizedInput = Array.isArray(resolvedInput)
-    ? resolvedInput.filter((item): item is "text" | "image" => item === "text" || item === "image")
+    ? (resolvedInput.filter(
+        (item) => item === "text" || item === "image" || item === "audio",
+      ) as Array<"text" | "image">)
     : [];
   if (
     normalizedInput.length > 0 &&

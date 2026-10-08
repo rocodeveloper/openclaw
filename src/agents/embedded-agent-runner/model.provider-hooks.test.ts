@@ -131,3 +131,24 @@ describe("resolved model Tool Search policy", () => {
     },
   );
 });
+
+describe("resolved model audio input", () => {
+  it.each([
+    ["google-customer", "google-generative-ai", true],
+    ["custom-host", "openai-completions", false],
+  ] as const)("keeps configured audio input for %s on %s: %s", (provider, api, expected) => {
+    const resolved = normalizeResolvedModel({
+      provider,
+      model: model({
+        id: "gemini-3.5-flash-lite",
+        provider,
+        api,
+        baseUrl: "https://generativelanguage.googleapis.com/v1beta",
+        input: ["text", "image", "audio"] as never,
+      }),
+    });
+
+    expect((resolved.input as string[]).includes("audio")).toBe(expected);
+    expect(resolved.input).toEqual(expect.arrayContaining(["text", "image"]));
+  });
+});
