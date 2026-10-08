@@ -41,7 +41,11 @@ import { whatsappInboundLog } from "../loggers.js";
 import { buildMentionConfig } from "../mentions.js";
 import { elide } from "../util.js";
 import { maybeSendAckReaction } from "./ack-reaction.js";
-import { hasWhatsAppAudioBody, transcribeWhatsAppAudioMessage } from "./audio-preflight.js";
+import {
+  defersAudioTranscriptToAgent,
+  hasWhatsAppAudioBody,
+  transcribeWhatsAppAudioMessage,
+} from "./audio-preflight.js";
 import { stripMentionsForCommand } from "./commands.js";
 import {
   resolveVisibleWhatsAppGroupHistory,
@@ -212,6 +216,7 @@ export async function processMessage(params: {
   let audioTranscript: string | undefined = params.preflightAudioTranscript ?? undefined;
   if (
     params.preflightAudioTranscript === undefined &&
+    !defersAudioTranscriptToAgent(params.cfg) &&
     hasWhatsAppAudioBody(params.msg) &&
     params.msg.payload.media?.path
   ) {

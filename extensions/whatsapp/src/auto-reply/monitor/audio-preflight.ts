@@ -9,6 +9,10 @@ export function hasWhatsAppAudioBody(msg: AdmittedWebInboundMessage): boolean {
   );
 }
 
+export function defersAudioTranscriptToAgent(cfg: OpenClawConfig): boolean {
+  return (cfg.tools?.media?.audio?.delivery ?? "auto") !== "transcript";
+}
+
 export async function transcribeWhatsAppAudioMessage(
   cfg: OpenClawConfig,
   msg: AdmittedWebInboundMessage,

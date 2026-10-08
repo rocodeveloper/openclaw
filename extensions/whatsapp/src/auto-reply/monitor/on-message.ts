@@ -19,7 +19,11 @@ import { requireWhatsAppInboundAdmission } from "../../inbound/admission.js";
 import type { AdmittedWebInboundMessage } from "../../inbound/types.js";
 import { buildMentionConfig } from "../mentions.js";
 import { maybeSendAckReaction } from "./ack-reaction.js";
-import { hasWhatsAppAudioBody, transcribeWhatsAppAudioMessage } from "./audio-preflight.js";
+import {
+  defersAudioTranscriptToAgent,
+  hasWhatsAppAudioBody,
+  transcribeWhatsAppAudioMessage,
+} from "./audio-preflight.js";
 import { maybeBroadcastMessage } from "./broadcast.js";
 import {
   handleOwnerGroupUnregister,
@@ -205,7 +209,7 @@ export function createWebOnMessageHandler(params: {
         preflightAudioTranscript = null;
       }
     };
-    const runAudioPreflightOnce = async () => {
+    const runAudioPreflightOnce = async (purpose: "mention" | "turn") => {
       if (
         preflightAudioTranscript !== undefined ||
         !canRunEarlyAudioPreflight ||
@@ -237,7 +241,9 @@ export function createWebOnMessageHandler(params: {
         });
         ackAlreadySent = ackReaction !== null;
       }
-      await transcribeAudioOnce();
+      if (purpose === "mention" || !defersAudioTranscriptToAgent(cfg)) {
+        await transcribeAudioOnce();
+      }
     };
 
     if (conversationKind === "group") {
@@ -299,7 +305,7 @@ export function createWebOnMessageHandler(params: {
         "needsMentionText" in gating &&
         gating.needsMentionText === true
       ) {
-        await runAudioPreflightOnce();
+        await runAudioPreflightOnce("mention");
         gating = await applyGroupGating({
           ...gatingParams,
           ...(typeof preflightAudioTranscript === "string"
@@ -349,7 +355,7 @@ export function createWebOnMessageHandler(params: {
       recordAcceptedConfiguredGroupRoute = null;
     }
 
-    await runAudioPreflightOnce();
+    await runAudioPreflightOnce("turn");
 
     const hasBroadcastTargets =
       !configuredRoute.bindingResolution &&
@@ -357,7 +363,7 @@ export function createWebOnMessageHandler(params: {
     if (hasBroadcastTargets && statusReactionController) {
       await clearPreDispatchReaction();
     }
-    if (hasBroadcastTargets && !canRunEarlyAudioPreflight) {
+    if (hasBroadcastTargets && !canRunEarlyAudioPreflight && !defersAudioTranscriptToAgent(cfg)) {
       await transcribeAudioOnce();
     }
 

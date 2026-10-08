@@ -185,7 +185,7 @@ function makeRoute(overrides: Partial<TestRoute> = {}): TestRoute {
 function makeParams(msgOverrides: AudioMessageOverrides = {}) {
   return {
     cfg: {
-      tools: { media: { audio: { enabled: true } } },
+      tools: { media: { audio: { enabled: true, delivery: "transcript" } } },
       channels: { whatsapp: {} },
       commands: { useAccessGroups: false },
     } as never,
@@ -444,4 +444,27 @@ describe("processMessage audio preflight transcription", () => {
       Body: "",
     });
   });
+
+  it.each(["auto", "native"])(
+    "defers STT to the agent turn and keeps the untranscribed audio fact in %s delivery",
+    async (delivery) => {
+      await processMessage({
+        ...makeParams(),
+        cfg: {
+          tools: { media: { audio: { enabled: true, delivery } } },
+          channels: { whatsapp: {} },
+          commands: { useAccessGroups: false },
+        } as never,
+      });
+
+      expect(transcribeFirstAudioMock).not.toHaveBeenCalled();
+      const context = firstDispatchContext();
+      expectContextFields(context, { Body: "" });
+      expect(context.Transcript).toBeUndefined();
+      expect(context.media).toEqual([
+        expect.objectContaining({ path: "/tmp/voice.ogg", kind: "audio" }),
+      ]);
+      expect((context.media as Array<{ transcribed?: boolean }>)[0]?.transcribed).not.toBe(true);
+    },
+  );
 });

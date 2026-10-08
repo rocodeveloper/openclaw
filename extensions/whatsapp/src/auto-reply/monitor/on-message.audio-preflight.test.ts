@@ -149,6 +149,15 @@ function mockObjectArg(mockFn: ReturnType<typeof vi.fn>, label: string, callInde
   return arg as Record<string, unknown>;
 }
 
+const TRANSCRIPT_DELIVERY_CFG = {
+  tools: { media: { audio: { delivery: "transcript" } } },
+  channels: {
+    whatsapp: {
+      ackReaction: { enabled: true },
+    },
+  },
+};
+
 function makeHandler(overrides: Partial<Parameters<typeof createWebOnMessageHandler>[0]> = {}) {
   return createWebOnMessageHandler({
     cfg: {
@@ -203,7 +212,7 @@ describe("createWebOnMessageHandler audio preflight", () => {
   });
 
   it("sends ack reaction before audio preflight for voice notes", async () => {
-    const handler = makeHandler();
+    const handler = makeHandler({ cfg: TRANSCRIPT_DELIVERY_CFG as never });
 
     await handler(makeAudioMsg());
 
@@ -218,12 +227,8 @@ describe("createWebOnMessageHandler audio preflight", () => {
   it("sends queued status reaction before audio preflight when status reactions are enabled", async () => {
     const handler = makeHandler({
       cfg: {
+        ...TRANSCRIPT_DELIVERY_CFG,
         messages: { statusReactions: { enabled: true } },
-        channels: {
-          whatsapp: {
-            ackReaction: { enabled: true },
-          },
-        },
       } as never,
     });
 
@@ -266,11 +271,7 @@ describe("createWebOnMessageHandler audio preflight", () => {
     );
     const handler = makeHandler({
       cfg: {
-        channels: {
-          whatsapp: {
-            ackReaction: { enabled: true },
-          },
-        },
+        ...TRANSCRIPT_DELIVERY_CFG,
         broadcast: {
           "1203630@g.us": ["main", "backup"],
         },
@@ -294,14 +295,10 @@ describe("createWebOnMessageHandler audio preflight", () => {
     );
     const handler = makeHandler({
       cfg: {
+        ...TRANSCRIPT_DELIVERY_CFG,
         messages: { statusReactions: { enabled: true } },
         broadcast: {
           "1203630@g.us": ["main", "backup"],
-        },
-        channels: {
-          whatsapp: {
-            ackReaction: { enabled: true },
-          },
         },
       } as never,
     });
@@ -390,7 +387,7 @@ describe("createWebOnMessageHandler audio preflight", () => {
       capturedCtx = ctx;
       return "transcribed voice note";
     });
-    const handler = makeHandler();
+    const handler = makeHandler({ cfg: TRANSCRIPT_DELIVERY_CFG as never });
 
     await handler(makeAudioMsg());
 
@@ -411,6 +408,26 @@ describe("createWebOnMessageHandler audio preflight", () => {
       AccountId: "default",
     });
   });
+
+  it.each(["auto", "native"])(
+    "leaves direct voice notes untranscribed for the agent in %s delivery",
+    async (delivery) => {
+      const handler = makeHandler({
+        cfg: {
+          tools: { media: { audio: { delivery } } },
+          channels: { whatsapp: { ackReaction: { enabled: true } } },
+        } as never,
+      });
+
+      await handler(makeAudioMsg());
+
+      expect(events).toEqual(["ack"]);
+      expect(transcribeFirstAudioMock).not.toHaveBeenCalled();
+      const processParams = mockObjectArg(processMessageMock, "processMessage");
+      expect(processParams).not.toHaveProperty("preflightAudioTranscript");
+      expect(processParams.ackAlreadySent).toBe(true);
+    },
+  );
 
   it("does not transcribe group voice when policy gating rejects before mention", async () => {
     applyGroupGatingMock.mockResolvedValueOnce({ shouldProcess: false });
