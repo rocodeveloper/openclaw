@@ -97,14 +97,14 @@ export async function runGoogleGenerateContentLifecycle<T extends GoogleApiType>
   output: AssistantMessage;
   options?: Pick<StreamOptions, "signal" | "onPayload">;
   createClient: () => GoogleGenerateContentClient;
-  buildParams: () => GenerateContentParameters;
+  buildParams: () => GenerateContentParameters | Promise<GenerateContentParameters>;
   nextToolCallId: (name: string | undefined) => string;
 }): Promise<void> {
   const { stream, model, output, options } = params;
 
   try {
     const client = params.createClient();
-    let requestParams = params.buildParams();
+    let requestParams = await params.buildParams();
     const nextParams = await options?.onPayload?.(requestParams, model);
     if (nextParams !== undefined) {
       requestParams = nextParams as GenerateContentParameters;

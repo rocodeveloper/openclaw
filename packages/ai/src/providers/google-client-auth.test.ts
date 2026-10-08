@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { configureAiTransportHost } from "../host.js";
+import { PROVIDER_CONTEXT_HANDOFF, type ProviderContext } from "../provider-types.js";
 import type { Context, Model } from "../types.js";
 
 const googleMockState = vi.hoisted(() => ({ configs: [] as unknown[], requests: [] as unknown[] }));
@@ -218,6 +219,48 @@ describe("Google SDK construction auth", () => {
       vertexai: true,
       project: "vertex-project",
       location: "us-central1",
+    });
+  });
+});
+
+describe("Google provider context handoff", () => {
+  beforeEach(() => {
+    googleMockState.configs = [];
+    googleMockState.requests = [];
+  });
+
+  it("sends provider-time audio content from the context handoff", async () => {
+    const providerContext: ProviderContext = {
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "voice" },
+            { type: "audio", data: "ogg-bytes", mimeType: "audio/ogg" },
+          ],
+          timestamp: 0,
+        },
+      ],
+    };
+
+    const audioModel = {
+      ...googleModel(),
+      provider: "google-customer",
+      input: ["text", "image", "audio"],
+    } as never;
+
+    await streamGoogle(audioModel, context, {
+      apiKey: "test",
+      [PROVIDER_CONTEXT_HANDOFF]: async () => providerContext,
+    } as never).result();
+
+    expect(googleMockState.requests[0]).toMatchObject({
+      contents: [
+        {
+          role: "user",
+          parts: [{ text: "voice" }, { inlineData: { mimeType: "audio/ogg", data: "ogg-bytes" } }],
+        },
+      ],
     });
   });
 });

@@ -1,6 +1,7 @@
 import { GoogleGenAI } from "@google/genai";
 import { getEnvApiKey } from "../env-api-keys.js";
 import { getAiTransportHost, resolveAiTransportHeaderSentinels } from "../host.js";
+import { resolveProviderContext } from "../provider-types.js";
 import { createAssistantOutput } from "../transports/assistant-output.js";
 import { resolveOpencodeSessionHeaders } from "../transports/session-affinity.js";
 import { mergeTransportHeaders } from "../transports/transport-stream-shared.js";
@@ -35,7 +36,12 @@ export const streamGoogle: StreamFunction<"google-generative-ai", GoogleOptions>
       const apiKey = options?.apiKey || getEnvApiKey(model.provider) || "";
       return createClient(model, apiKey, resolveOpencodeSessionHeaders(model, options));
     },
-    buildParams: () => buildGoogleGenerateContentParams(model, context, options),
+    buildParams: async () =>
+      buildGoogleGenerateContentParams(
+        model,
+        (await resolveProviderContext(context, options)) as Context,
+        options,
+      ),
     nextToolCallId: (name) => `${name}_${Date.now()}_${++toolCallCounter}`,
   });
 
