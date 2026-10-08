@@ -263,6 +263,7 @@ provider-wide rather than scoped to the audio model entry.
 - OpenAI auto-detect default is `gpt-4o-transcribe`; set `model: "gpt-4o-mini-transcribe"` for a cheaper/faster option.
 - Transcript is available to templates as `{{Transcript}}`.
 - `tools.media.audio.echoTranscript` is off by default; `echoFormat` accepts a `{transcript}` placeholder.
+- `tools.media.audio.delivery` controls how audio reaches the agent model. `auto` (default) sends raw audio to models that accept audio input and transcribes before the turn only when the selected or a fallback model cannot take audio. `native` transcribes only when a model without audio input runs. `transcript` always transcribes. One transcript is kept per message, so a fallback inside one turn does not transcribe again. Gemini models on the AI Studio transport accept audio input; harnesses that do not use provider-time media (for example Codex app-server, CLI, and ACP backends) get the transcript before the turn when they are the selected model.
 - CLI stdout is capped at 5MB; keep CLI output concise.
 - CLI `args` should use `{{AttachmentPath}}` for the local audio file path. Run `openclaw doctor --fix` to migrate deprecated `{input}` placeholders from older `audio.transcription.command` configs (retired key: `audio.transcription`, replaced by `tools.media.models`). `{{MediaPath}}` remains a deprecated compatibility alias.
 - `tools.media.concurrency` bounds media tasks; it is not a GPU scheduler.

@@ -365,6 +365,7 @@ exports[`config tier coverage > keeps the curated common leaf set reviewable 1`]
   "tools.media.audio.attachments.mode",
   "tools.media.audio.attachments.prefer",
   "tools.media.audio.baseUrl",
+  "tools.media.audio.delivery",
   "tools.media.audio.echoFormat",
   "tools.media.audio.echoTranscript",
   "tools.media.audio.enabled",

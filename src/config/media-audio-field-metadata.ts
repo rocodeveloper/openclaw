@@ -22,6 +22,8 @@ export const MEDIA_AUDIO_FIELD_HELP = {
     "Echo the audio transcript to the originating chat before agent processing. Enable this when users need to verify what the system heard.",
   "tools.media.audio.echoFormat":
     "Format the echoed transcript with a {transcript} placeholder. Keep the placeholder intact so delivery includes the transcript.",
+  "tools.media.audio.delivery":
+    'Choose how inbound audio reaches the agent model: "auto" (default) sends raw audio to audio-capable models and transcribes ahead of the turn only when the selected or a fallback model cannot take audio, "native" transcribes only when a model without audio input runs, and "transcript" always transcribes.',
 } satisfies Record<string, string>;
 
 export const MEDIA_AUDIO_FIELD_LABELS: Record<keyof typeof MEDIA_AUDIO_FIELD_HELP, string> = {
@@ -36,4 +38,5 @@ export const MEDIA_AUDIO_FIELD_LABELS: Record<keyof typeof MEDIA_AUDIO_FIELD_HEL
   "tools.media.audio.attachments": "Audio Understanding Attachment Policy",
   "tools.media.audio.echoTranscript": "Echo Transcript to Chat",
   "tools.media.audio.echoFormat": "Transcript Echo Format",
+  "tools.media.audio.delivery": "Audio Delivery Mode",
 };

@@ -961,6 +961,7 @@ const ToolsMediaAudioSchema = ToolsMediaCapabilitySchema.unwrap()
      * Default: '📝 "{transcript}"'
      */
     echoFormat: z.string().optional(),
+    delivery: z.enum(["auto", "native", "transcript"]).optional(),
   })
   .optional();
 
