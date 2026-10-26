@@ -1,3 +1,4 @@
+import type { PreparedCommandOwnerAuthority } from "openclaw/plugin-sdk/command-auth-native";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 import { normalizeAccountId, normalizeOptionalAccountId } from "openclaw/plugin-sdk/routing";
 import type { AdmittedWebInboundMessage } from "../../inbound/types.js";
@@ -12,7 +13,6 @@ function normalizeGroupCommandText(text: string | undefined): string {
   return (text ?? "")
     .normalize("NFKC")
     .replace(/[​-‏﻿]/g, " ")
-    .replace(/@\S+/g, " ")
     .replace(/\s+/g, " ")
     .trim()
     .toLowerCase();
@@ -126,17 +126,22 @@ function unregisterGroup(
 }
 
 export async function handleOwnerInUnregisteredGroup(params: {
+  authority: PreparedCommandOwnerAuthority;
+  loadConfig: () => OpenClawConfig;
   msg: AdmittedWebInboundMessage;
   conversationId: string;
   accountId?: string;
   agentId: string;
+  commandBody: string;
   logVerbose: (msg: string) => void;
 }): Promise<void> {
   const { msg, conversationId } = params;
-  if (!isRegisterCommand(msg.payload.body)) {
-    await msg.platform
-      .reply("Unregistered group. Mention me with /register to enable.")
-      .catch(() => undefined);
+  if (!params.authority.isCurrent(params.loadConfig())) {
+    await msg.platform.reply("Failed to register group.");
+    return;
+  }
+  if (!isRegisterCommand(params.commandBody)) {
+    await msg.platform.reply("Unregistered group. Mention me with /register to enable.");
     params.logVerbose(
       `[group-auto-register] Owner in unregistered group ${conversationId}, sent notice`,
     );
@@ -145,7 +150,12 @@ export async function handleOwnerInUnregisteredGroup(params: {
   try {
     await getWhatsAppRuntime().config.mutateConfigFile({
       afterWrite: { mode: "auto" },
-      mutate: (draft) => registerGroup(draft, params),
+      mutate: (draft) => {
+        if (!params.authority.isCurrent(draft)) {
+          throw new Error("Owner authority expired");
+        }
+        registerGroup(draft, params);
+      },
     });
     params.logVerbose(`[group-auto-register] Owner registered group ${conversationId}`);
     await msg.platform.reply("Group registered. You can now mention me to chat.");
@@ -156,6 +166,7 @@ export async function handleOwnerInUnregisteredGroup(params: {
 }
 
 export async function handleOwnerGroupUnregister(params: {
+  authority: PreparedCommandOwnerAuthority;
   msg: AdmittedWebInboundMessage;
   conversationId: string;
   accountId?: string;
@@ -165,7 +176,12 @@ export async function handleOwnerGroupUnregister(params: {
   try {
     await getWhatsAppRuntime().config.mutateConfigFile({
       afterWrite: { mode: "auto" },
-      mutate: (draft) => unregisterGroup(draft, params),
+      mutate: (draft) => {
+        if (!params.authority.isCurrent(draft)) {
+          throw new Error("Owner authority expired");
+        }
+        unregisterGroup(draft, params);
+      },
     });
     params.logVerbose(`[group-auto-register] Owner unregistered group ${conversationId}`);
     await msg.platform.reply("Group unregistered.");

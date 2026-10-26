@@ -90,7 +90,8 @@ vi.mock("../../identity.js", async (importOriginal) => {
   return {
     ...actual,
     getPrimaryIdentityId: () => null,
-    getSelfIdentity: () => ({ e164: "+15550001111" }),
+    getSelfIdentity: (msg: Parameters<typeof actual.getSelfIdentity>[0]) =>
+      msg.platform.self ? actual.getSelfIdentity(msg) : { e164: "+15550001111" },
     getSenderIdentity: () => ({ name: "Alice", e164: "+15550002222" }),
   };
 });
@@ -332,21 +333,29 @@ describe("processMessage group system prompt wiring", () => {
     ).toBe("from config");
   });
 
-  it("strips leading bot mentions before detecting group slash commands", async () => {
-    resolvePolicyMock.mockReturnValue(makePolicy(makeAccount()));
-    isControlCommandMessageMock.mockReturnValue(true);
-    shouldComputeCommandAuthorizedMock.mockReturnValue(true);
-    const cfg = { messages: { groupChat: { mentionPatterns: ["@assistant"] } } };
-
-    await callProcessMessage({ cfg, msg: makeBaseMsg({ body: "@assistant /model" }) });
-
-    expect(shouldComputeCommandAuthorizedMock).toHaveBeenCalledWith("/model", cfg);
-    expect(isControlCommandMessageMock).toHaveBeenCalledWith("/model", cfg);
-    expect(mockCallArg(buildContextMock, "buildWhatsAppInboundContext")).toMatchObject({
-      command: { kind: "text-slash", authorized: true, body: "/model" },
-      rawBody: "/model",
-    });
-  });
+  it.each(["@assistant", "@15550000001", "@123456789012345", "@15550000001@s.whatsapp.net"])(
+    "strips leading bot mention %s while preserving command arguments",
+    async (prefix) => {
+      resolvePolicyMock.mockReturnValue(makePolicy(makeAccount()));
+      isControlCommandMessageMock.mockReturnValue(true);
+      shouldComputeCommandAuthorizedMock.mockReturnValue(true);
+      const cfg = { messages: { groupChat: { mentionPatterns: ["@assistant"] } } };
+      const suffix = '/config set channels.whatsapp.responsePrefix="call +15550000001  @assistant"';
+      const msg = makeBaseMsg({ body: `${prefix} ${suffix}` });
+      msg.platform.self = {
+        e164: "+15550000001",
+        jid: "15550000001@s.whatsapp.net",
+        lid: "123456789012345@lid",
+      };
+      await callProcessMessage({ cfg, msg });
+      expect(shouldComputeCommandAuthorizedMock).toHaveBeenCalledWith(suffix, cfg);
+      expect(isControlCommandMessageMock).toHaveBeenCalledWith(suffix, cfg);
+      expect(mockCallArg(buildContextMock, "buildWhatsAppInboundContext")).toMatchObject({
+        command: { kind: "text-slash", authorized: true, body: suffix },
+        rawBody: suffix,
+      });
+    },
+  );
 
   it("keeps generated media notices out of command input", async () => {
     isControlCommandMessageMock.mockReturnValue(true);

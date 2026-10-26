@@ -58,6 +58,13 @@ after the handler returns. Already accepted operations still finish their
 settlement and cleanup. Ordinary authorized read commands and explicit Gateway
 scope checks retain their existing behavior.
 
+Channel handlers can use `prepareCommandOwnerAuthority` from
+`openclaw/plugin-sdk/command-auth-native` for owner-only configuration changes.
+Pass the admitted channel, account, and sender. Keep the returned
+`PreparedCommandOwnerAuthority` across awaited work. Check `isCurrent(currentCfg)`
+before the response and inside the configuration mutation callback.
+Channel admission alone does not grant owner authority.
+
 Commands may also declare a bounded client presentation action for parsed no-argument
 invocations:
 

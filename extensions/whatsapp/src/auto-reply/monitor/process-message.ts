@@ -357,7 +357,7 @@ export async function processMessage(params: {
             conversationId,
             providerPolicy: account.mentionPatterns,
           }).mentionRegexes,
-          self.e164,
+          self,
         )
       : rawCommandBody;
   const dmRouteTarget = resolveWhatsAppDmRouteTarget({

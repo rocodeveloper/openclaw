@@ -1,3 +1,4 @@
+import { prepareCommandOwnerAuthority } from "openclaw/plugin-sdk/command-auth-native";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createTestWebInboundMessage } from "../../inbound/test-message.test-helper.js";
@@ -11,6 +12,7 @@ import {
 } from "./group-auto-register.js";
 import { applyGroupGating } from "./group-gating.js";
 import type { GroupHistoryEntry } from "./inbound-context.js";
+import { createWebOnMessageHandler } from "./on-message.js";
 
 const mutateConfigFileMock = vi.hoisted(() => vi.fn());
 
@@ -35,6 +37,7 @@ let persistedConfig: OpenClawConfig | undefined;
 
 function createConfig(overrides: Partial<OpenClawConfig> = {}): OpenClawConfig {
   return {
+    commands: { ownerAllowFrom: [ownerNumber] },
     channels: { whatsapp: { accounts: { work: {}, other: {} } } },
     ...overrides,
   };
@@ -62,6 +65,7 @@ function createMessage(body: string, senderE164 = ownerNumber): AdmittedWebInbou
 function gatingParams(msg: AdmittedWebInboundMessage, groups: Record<string, object>) {
   return {
     cfg: {
+      commands: { ownerAllowFrom: [ownerNumber] },
       channels: {
         whatsapp: {
           allowFrom: [ownerNumber],
@@ -97,7 +101,7 @@ describe("WhatsApp group registration gating", () => {
   it("reports an owner message in an unregistered group", async () => {
     await expect(
       applyGroupGating(gatingParams(createMessage("/register"), otherRegisteredGroups)),
-    ).resolves.toEqual({
+    ).resolves.toMatchObject({
       shouldProcess: false,
       ownerGroupAction: "unregistered-group",
     });
@@ -114,7 +118,7 @@ describe("WhatsApp group registration gating", () => {
   it("reports an owner unregister command without a mention", async () => {
     await expect(
       applyGroupGating(gatingParams(createMessage("/unregister"), { [groupId]: {} })),
-    ).resolves.toEqual({ shouldProcess: false, ownerGroupAction: "unregister" });
+    ).resolves.toMatchObject({ shouldProcess: false, ownerGroupAction: "unregister" });
   });
 
   it("does not report an unregister command from a member", async () => {
@@ -139,17 +143,152 @@ describe("WhatsApp group auto-registration", () => {
     });
   });
 
+  it.each([
+    {
+      action: "register",
+      body: "/register",
+      sender: ownerNumber,
+      registered: false,
+      revoke: false,
+    },
+    {
+      action: "unregister",
+      body: "/unregister",
+      sender: ownerNumber,
+      registered: true,
+      revoke: false,
+    },
+    {
+      action: "notice-rejected",
+      body: "hello",
+      sender: ownerNumber,
+      registered: false,
+      revoke: false,
+    },
+    { action: "notice", body: "hello", sender: ownerNumber, registered: false, revoke: false },
+    { action: "denied", body: "/register", sender: memberNumber, registered: false, revoke: false },
+    { action: "revoked", body: "/register", sender: ownerNumber, registered: false, revoke: true },
+  ])(
+    "checks canonical authority through the monitor handler for $action",
+    async ({ action, body, sender, registered, revoke }) => {
+      currentConfig = createConfig({
+        commands: { ownerAllowFrom: [ownerNumber] },
+        agents: { list: [{ id: "configured-agent", default: true }] },
+        channels: {
+          whatsapp: {
+            allowFrom: [ownerNumber, memberNumber],
+            groupPolicy: "allowlist",
+            accounts: {
+              work: {
+                allowFrom: [ownerNumber, memberNumber],
+                groupPolicy: "allowlist",
+                groups: registered ? { [groupId]: {} } : otherRegisteredGroups,
+              },
+            },
+          },
+        },
+        bindings: registered ? [groupBinding("work", "configured-agent")] : [],
+      });
+      if (revoke) {
+        mutateConfigFileMock.mockImplementationOnce(async ({ mutate }) => {
+          const draft = structuredClone(currentConfig);
+          draft.commands = { ownerAllowFrom: [memberNumber] };
+          mutate(draft);
+          persistedConfig = draft;
+        });
+      }
+      const dispatchReplyFromConfig = vi.fn();
+      const replyResolver = vi.fn();
+      const handler = createWebOnMessageHandler({
+        cfg: currentConfig,
+        loadConfig: () => currentConfig,
+        verbose: false,
+        connectionId: "owner-check",
+        maxMediaBytes: 1024,
+        groupHistoryLimit: 20,
+        groupHistories: new Map(),
+        groupMemberNames: new Map(),
+        backgroundTasks: new Set(),
+        replyResolver,
+        dispatchReplyFromConfig,
+        replyLogger: { info: vi.fn(), warn: vi.fn(), debug: vi.fn(), error: vi.fn() } as never,
+      });
+      const msg = createMessage(body, sender);
+      if (action === "notice-rejected") {
+        vi.mocked(msg.platform.reply).mockRejectedValueOnce(new Error("notice rejected"));
+        await expect(handler(msg)).rejects.toThrow("notice rejected");
+      } else {
+        await handler(msg);
+      }
+      expect(replyResolver).not.toHaveBeenCalled();
+      expect(dispatchReplyFromConfig).not.toHaveBeenCalled();
+      if (action === "register") {
+        expect(persistedConfig?.channels?.whatsapp?.accounts?.work?.groups?.[groupId]).toEqual({
+          requireMention: true,
+        });
+        expect(persistedConfig?.bindings).toEqual([groupBinding("work", "configured-agent")]);
+        expect(msg.platform.reply).toHaveBeenCalledWith(
+          "Group registered. You can now mention me to chat.",
+        );
+      } else if (action === "unregister") {
+        expect(persistedConfig?.channels?.whatsapp?.accounts?.work?.groups).toEqual({});
+        expect(persistedConfig?.bindings).toEqual([]);
+        expect(msg.platform.reply).toHaveBeenCalledWith("Group unregistered.");
+      } else {
+        expect(persistedConfig).toBeUndefined();
+        if (action === "notice" || action === "notice-rejected") {
+          expect(msg.platform.reply).toHaveBeenCalledWith(
+            "Unregistered group. Mention me with /register to enable.",
+          );
+        } else if (action === "revoked") {
+          expect(msg.platform.reply).toHaveBeenCalledWith("Failed to register group.");
+        } else {
+          expect(msg.platform.reply).not.toHaveBeenCalled();
+        }
+      }
+    },
+  );
+
+  it("propagates an owner notice send failure without a sent notice log", async () => {
+    const msg = createMessage("hello");
+    vi.mocked(msg.platform.reply).mockRejectedValueOnce(new Error("notice rejected"));
+    await expect(
+      handleOwnerInUnregisteredGroup({
+        authority: await prepareCommandOwnerAuthority(currentConfig, {
+          channel: "whatsapp",
+          accountId: "work",
+          senderId: ownerNumber,
+        }),
+        loadConfig: () => currentConfig,
+        commandBody: "hello",
+        msg,
+        conversationId: groupId,
+        accountId: "work",
+        agentId: "configured-agent",
+        logVerbose,
+      }),
+    ).rejects.toThrow("notice rejected");
+    expect(logVerbose).not.toHaveBeenCalled();
+  });
+
   it("recognizes the command syntax with mentions and invisible characters", () => {
     expect(isRegisterCommand("/register")).toBe(true);
-    expect(isRegisterCommand("@assistant​ Register")).toBe(true);
+    expect(isRegisterCommand("@assistant​ Register")).toBe(false);
     expect(isRegisterCommand("/status")).toBe(false);
-    expect(isUnregisterCommand("@assistant /unregister")).toBe(true);
+    expect(isUnregisterCommand("@assistant /unregister")).toBe(false);
     expect(isUnregisterCommand("/register")).toBe(false);
   });
 
   it("sends a notice without a config write when the owner does not register", async () => {
     const msg = createMessage("hello");
     await handleOwnerInUnregisteredGroup({
+      authority: await prepareCommandOwnerAuthority(currentConfig, {
+        channel: "whatsapp",
+        accountId: "work",
+        senderId: ownerNumber,
+      }),
+      loadConfig: () => currentConfig,
+      commandBody: "hello",
       msg,
       conversationId: groupId,
       accountId: "work",
@@ -165,6 +304,13 @@ describe("WhatsApp group auto-registration", () => {
 
   it("registers the group in the account and uses the resolved route target", async () => {
     await handleOwnerInUnregisteredGroup({
+      authority: await prepareCommandOwnerAuthority(currentConfig, {
+        channel: "whatsapp",
+        accountId: "work",
+        senderId: ownerNumber,
+      }),
+      loadConfig: () => currentConfig,
+      commandBody: "/register",
       msg: createMessage("/register"),
       conversationId: groupId,
       accountId: "work",
@@ -186,6 +332,13 @@ describe("WhatsApp group auto-registration", () => {
     currentConfig = createConfig({ bindings: [catchAll] });
 
     await handleOwnerInUnregisteredGroup({
+      authority: await prepareCommandOwnerAuthority(currentConfig, {
+        channel: "whatsapp",
+        accountId: "work",
+        senderId: ownerNumber,
+      }),
+      loadConfig: () => currentConfig,
+      commandBody: "/register",
       msg: createMessage("/register"),
       conversationId: groupId,
       accountId: "work",
@@ -200,6 +353,13 @@ describe("WhatsApp group auto-registration", () => {
     currentConfig = createConfig({ bindings: [groupBinding("other", "other-agent")] });
 
     await handleOwnerInUnregisteredGroup({
+      authority: await prepareCommandOwnerAuthority(currentConfig, {
+        channel: "whatsapp",
+        accountId: "work",
+        senderId: ownerNumber,
+      }),
+      loadConfig: () => currentConfig,
+      commandBody: "/register",
       msg: createMessage("/register"),
       conversationId: groupId,
       accountId: "work",
@@ -233,6 +393,11 @@ describe("WhatsApp group auto-registration", () => {
     });
 
     await handleOwnerGroupUnregister({
+      authority: await prepareCommandOwnerAuthority(currentConfig, {
+        channel: "whatsapp",
+        accountId: "work",
+        senderId: ownerNumber,
+      }),
       msg: createMessage("/unregister"),
       conversationId: groupId,
       accountId: "work",
@@ -256,6 +421,11 @@ describe("WhatsApp group auto-registration", () => {
     });
 
     await handleOwnerGroupUnregister({
+      authority: await prepareCommandOwnerAuthority(currentConfig, {
+        channel: "whatsapp",
+        accountId: "work",
+        senderId: ownerNumber,
+      }),
       msg: createMessage("/unregister"),
       conversationId: groupId,
       accountId: "default",

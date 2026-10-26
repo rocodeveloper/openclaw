@@ -472,8 +472,26 @@ export const VENDOR_TOKEN_REDACT_PATTERNS: readonly string[] = [
   TELEGRAM_TOKEN_REDACT_PATTERN,
 ];
 
+const WIKI_COMMAND_ARGUMENT_MATCHER = Object.freeze({
+  source: "wiki-command-argument",
+  *exec(text: string): Iterable<RedactMatch> {
+    for (const match of text.matchAll(
+      /(?:^|[\s"'`])\/wiki[ \t]+("[^"\r\n]*"|'[^'\r\n]*'|[^\s"'`]+)/gi,
+    )) {
+      yield {
+        match: match[0],
+        groups: [match[1] ?? ""],
+        input: text,
+        offset: match.index,
+        replacement: "***",
+      };
+    }
+  },
+});
+
 export const DEFAULT_REDACT_PATTERNS: readonly RedactPattern[] = [
   ...DEFAULT_REDACT_FIELD_PATTERNS,
+  WIKI_COMMAND_ARGUMENT_MATCHER,
   ...VENDOR_TOKEN_REDACT_PATTERNS,
   AWS_SECRET_ACCESS_KEY_MATCHER,
 ];

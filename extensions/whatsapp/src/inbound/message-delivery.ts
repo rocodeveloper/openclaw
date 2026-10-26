@@ -10,7 +10,7 @@ import { resolveInboundDebounceMs } from "openclaw/plugin-sdk/channel-inbound-de
 import { pruneMapToMaxSize } from "openclaw/plugin-sdk/collection-runtime";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 import { createDeferred } from "openclaw/plugin-sdk/extension-shared";
-import { getChildLogger } from "openclaw/plugin-sdk/logging-core";
+import { getChildLogger, redactSensitiveText } from "openclaw/plugin-sdk/logging-core";
 import { parseStrictFiniteNumber } from "openclaw/plugin-sdk/number-runtime";
 import { defaultRuntime, createSubsystemLogger } from "openclaw/plugin-sdk/runtime-env";
 import { raceWithTimeout } from "openclaw/plugin-sdk/time-runtime";
@@ -287,7 +287,7 @@ export function createWhatsAppMessageDeliveryCoordinator(options: WhatsAppMessag
       {
         from: inbound.from,
         to: self.e164 ?? "me",
-        body,
+        body: redactSensitiveText(body, { mode: "tools" }),
         mediaPath: enriched.mediaPath,
         mediaType: enriched.mediaType,
         mediaFileName: enriched.mediaFileName,
@@ -296,7 +296,9 @@ export function createWhatsAppMessageDeliveryCoordinator(options: WhatsAppMessag
         senderName,
         senderJid: inbound.participantJid,
         replyToId: enriched.replyContext?.id,
-        replyToBody: enriched.replyContext?.body,
+        replyToBody: enriched.replyContext?.body
+          ? redactSensitiveText(enriched.replyContext.body, { mode: "tools" })
+          : undefined,
         messageId: inbound.id,
       },
       "inbound message",

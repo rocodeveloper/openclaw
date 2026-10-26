@@ -1,4 +1,5 @@
 import type { BuildMentionRegexesOptions } from "openclaw/plugin-sdk/channel-mention-gating";
+import { prepareCommandOwnerAuthority } from "openclaw/plugin-sdk/command-auth-native";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 import { createDedupeCache } from "openclaw/plugin-sdk/dedupe-runtime";
 import { formatAudioTranscriptForAgent } from "openclaw/plugin-sdk/media-understanding-runtime";
@@ -128,31 +129,6 @@ export async function applyGroupGating(params: ApplyGroupGatingParams) {
     ...params.baseMentionConfig,
     allowFrom: inboundPolicy.configuredAllowFrom,
   };
-  if (conversationGroupPolicy.allowlistEnabled && !conversationGroupPolicy.allowed) {
-    const accountId = inboundPolicy.account.accountId;
-    const warnKey = JSON.stringify([accountId, conversationId, "group registry"]);
-    if (!groupDropWarned.check(warnKey)) {
-      const groupsPath = resolveWhatsAppGroupsConfigPath({ cfg: params.cfg, accountId });
-      params.replyLogger.warn(
-        { conversationId, accountId, groupsPath },
-        `WhatsApp group ${conversationId} not in ${groupsPath} — inbound dropped. Add the group JID to ${groupsPath} (or add "*" there to admit all groups). Sender authorization still applies.`,
-      );
-    }
-    params.logVerbose(
-      `Dropping message from unregistered WhatsApp group ${conversationId}. Add the group JID to channels.whatsapp.groups, or add "*" there to admit all groups. Sender authorization still applies.`,
-    );
-    return isOwnerSender(baseMentionConfig, params.msg, params.authDir)
-      ? ({ shouldProcess: false, ownerGroupAction: "unregistered-group" } as const)
-      : ({ shouldProcess: false } as const);
-  }
-
-  noteGroupMember(
-    params.groupMemberNames,
-    params.groupHistoryKey,
-    sender.e164 ?? undefined,
-    sender.name ?? undefined,
-  );
-
   const mentionConfig = {
     ...buildMentionConfig(params.cfg, params.agentId, {
       provider: "whatsapp",
@@ -171,12 +147,55 @@ export async function applyGroupGating(params: ApplyGroupGatingParams) {
   const commandBody = stripMentionsForCommand(
     mentionMsg.payload.body,
     mentionConfig.mentionRegexes,
-    self.e164,
+    self,
   );
+  if (conversationGroupPolicy.allowlistEnabled && !conversationGroupPolicy.allowed) {
+    const accountId = inboundPolicy.account.accountId;
+    const warnKey = JSON.stringify([accountId, conversationId, "group registry"]);
+    if (!groupDropWarned.check(warnKey)) {
+      const groupsPath = resolveWhatsAppGroupsConfigPath({ cfg: params.cfg, accountId });
+      params.replyLogger.warn(
+        { conversationId, accountId, groupsPath },
+        `WhatsApp group ${conversationId} not in ${groupsPath} — inbound dropped. Add the group JID to ${groupsPath} (or add "*" there to admit all groups). Sender authorization still applies.`,
+      );
+    }
+    params.logVerbose(
+      `Dropping message from unregistered WhatsApp group ${conversationId}. Add the group JID to channels.whatsapp.groups, or add "*" there to admit all groups. Sender authorization still applies.`,
+    );
+    const authority = await prepareCommandOwnerAuthority(params.cfg, {
+      channel: "whatsapp",
+      accountId: admission.accountId,
+      senderId: admission.sender.id,
+    });
+    return authority.isCurrent(params.cfg)
+      ? ({
+          shouldProcess: false,
+          ownerGroupAction: "unregistered-group",
+          authority,
+          commandBody,
+        } as const)
+      : ({ shouldProcess: false } as const);
+  }
+
+  noteGroupMember(
+    params.groupMemberNames,
+    params.groupHistoryKey,
+    sender.e164 ?? undefined,
+    sender.name ?? undefined,
+  );
+
   const activationCommand = parseActivationCommand(commandBody);
   const owner = isOwnerSender(baseMentionConfig, params.msg, params.authDir);
-  if (owner && isUnregisterCommand(commandBody)) {
-    return { shouldProcess: false, ownerGroupAction: "unregister" } as const;
+  if (isUnregisterCommand(commandBody)) {
+    const authority = await prepareCommandOwnerAuthority(params.cfg, {
+      channel: "whatsapp",
+      accountId: admission.accountId,
+      senderId: admission.sender.id,
+    });
+    if (!authority.isCurrent(params.cfg)) {
+      return { shouldProcess: false } as const;
+    }
+    return { shouldProcess: false, ownerGroupAction: "unregister", authority } as const;
   }
   const shouldBypassMention = owner && hasControlCommand(commandBody, params.cfg);
 

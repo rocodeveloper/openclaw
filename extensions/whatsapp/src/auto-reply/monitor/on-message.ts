@@ -306,9 +306,11 @@ export function createWebOnMessageHandler(params: {
       }
       if (!gating.shouldProcess) {
         await clearPreDispatchReaction();
-        const ownerGroupAction = "ownerGroupAction" in gating ? gating.ownerGroupAction : undefined;
-        if (ownerGroupAction === "unregistered-group") {
+        if ("ownerGroupAction" in gating && gating.ownerGroupAction === "unregistered-group") {
           await handleOwnerInUnregisteredGroup({
+            authority: gating.authority,
+            commandBody: gating.commandBody,
+            loadConfig: () => params.loadConfig?.() ?? params.cfg,
             msg,
             conversationId,
             accountId: route.accountId,
@@ -316,8 +318,9 @@ export function createWebOnMessageHandler(params: {
             logVerbose,
           });
         }
-        if (ownerGroupAction === "unregister") {
+        if ("ownerGroupAction" in gating && gating.ownerGroupAction === "unregister") {
           await handleOwnerGroupUnregister({
+            authority: gating.authority,
             msg,
             conversationId,
             accountId: route.accountId,

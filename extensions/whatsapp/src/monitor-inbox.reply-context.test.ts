@@ -16,8 +16,64 @@ import {
   type InboxOnMessage,
 } from "./monitor-inbox.test-harness.js";
 
+const inboundLogCapture = vi.hoisted(() => vi.fn());
+vi.mock("openclaw/plugin-sdk/logging-core", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("openclaw/plugin-sdk/logging-core")>();
+  return {
+    ...actual,
+    getChildLogger: (...args: Parameters<typeof actual.getChildLogger>) =>
+      Object.assign(actual.getChildLogger(...args), { info: inboundLogCapture }),
+  };
+});
+
 describe("web monitor inbox reply context", () => {
   installStreamsInboundMessageHooks();
+
+  it("redacts opaque Wiki credentials in raw and quoted logs while preserving command input", async () => {
+    const onMessage = vi.fn(async () => undefined);
+    const { listener, sock } = await startInboxMonitor(onMessage as InboxOnMessage);
+    const body = "@123 /wiki opaqueProvisioningValue";
+    const quote = '/wiki "quoted opaque value"';
+    inboundLogCapture.mockClear();
+    try {
+      sock.ev.emit("messages.upsert", {
+        type: "notify",
+        messages: [
+          {
+            key: { id: nextMessageId("wiki-log"), fromMe: false, remoteJid: "999@s.whatsapp.net" },
+            message: {
+              extendedTextMessage: {
+                text: body,
+                contextInfo: {
+                  stanzaId: "wiki-quote",
+                  participant: "111@s.whatsapp.net",
+                  quotedMessage: { conversation: quote },
+                },
+              },
+            },
+            messageTimestamp: 1_700_000_000,
+            pushName: "Tester",
+          },
+        ],
+      });
+      await vi.waitFor(() => expect(inboundLogCapture).toHaveBeenCalled(), { timeout: 15_000 });
+      expect(inboundLogCapture).toHaveBeenCalledWith(
+        expect.objectContaining({
+          body: "@123 /wiki ***",
+          replyToBody: "/wiki ***",
+        }),
+        "inbound message",
+      );
+      await waitForMessageCalls(onMessage, 1);
+      const inbound = inboundMessage(onMessage);
+      expect(inbound.payload.body).toBe(body);
+      expect(inbound.quote?.body).toBe(quote);
+      expect(JSON.stringify(inboundLogCapture.mock.calls)).not.toContain("opaqueProvisioningValue");
+      expect(JSON.stringify(inboundLogCapture.mock.calls)).not.toContain("quoted opaque value");
+    } finally {
+      await listener.close();
+    }
+  });
 
   async function expectQuotedReplyContext(quotedMessage: unknown) {
     const onMessage = vi.fn(async (msg) => {
