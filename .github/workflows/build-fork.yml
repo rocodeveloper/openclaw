@@ -45,6 +45,7 @@ jobs:
         with:
           install-bun: "false"
           cache-mode: "off"
+          semantic-checks: "true"
 
       - name: Verify generated source
         run: |
@@ -78,6 +79,12 @@ jobs:
           pnpm tsgo:test:root || status=1
           exit "$status"
 
+      - name: Lint
+        run: pnpm lint
+
+      - name: Check plugin SDK surface
+        run: pnpm plugin-sdk:surface:check
+
       - name: Test fork changes
         run: |
           mapfile -t fork_tests < <(git diff --name-only --diff-filter=AM "$BASE_TAG" HEAD -- '*.test.ts')
@@ -110,6 +117,7 @@ jobs:
             src/agents/model-audio-input.test.ts
             src/gateway/config-reload.test.ts
             src/hooks/bundled/outreach-session-end/handler.test.ts
+            src/logging/redact-byte-identity.test.ts
             src/media-understanding/audio-delivery.test.ts
             src/media-understanding/runner.native-audio.test.ts
             test/scripts/copy-hook-metadata.test.ts
