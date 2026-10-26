@@ -143,6 +143,7 @@ jobs:
           TARBALL: ${{ steps.package.outputs.tarball }}
           FORK_LEAK_TERMS: ${{ secrets.FORK_LEAK_TERMS }}
         run: |
+          node scripts/check-openclaw-package-tarball.mjs --require-bundled-workspace-deps "$TARBALL"
           node --input-type=module <<'NODE'
           import assert from 'node:assert/strict';
           import { execFileSync } from 'node:child_process';
@@ -157,9 +158,13 @@ jobs:
             assert(entries.includes(`${root}/package.json`), `Missing packaged plugin ${plugin}`);
             assert(entries.includes(`${root}/openclaw.plugin.json`), `Missing manifest for ${plugin}`);
             assert.equal(JSON.parse(readEntry(`${root}/openclaw.plugin.json`)).id, plugin);
+            const pluginPackage = JSON.parse(readEntry(`${root}/package.json`));
+            if (['whatsapp', 'discord', 'codex'].includes(plugin)) {
+              assert.equal(pluginPackage.openclaw?.build?.bundledDist, true, `Missing distribution ownership for ${plugin}`);
+            } else {
+              assert.notEqual(pluginPackage.openclaw?.build?.bundledDist, false, `External ownership for ${plugin}`);
+            }
           }
-          const inventory = JSON.parse(readEntry('package/dist/postinstall-inventory.json'));
-          assert(inventory, 'Missing package inventory');
           const details = execFileSync('tar', ['-tvf', archive], { encoding: 'utf8' }).split('\n');
           for (const script of ['outreach.sh', 'outreach-session-hook.sh']) {
             const entry = `package/dist/bundled/outreach-session-end/${script}`;
