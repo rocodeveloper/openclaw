@@ -8,6 +8,7 @@ import {
   FeishuStreamingSession,
   mergeStreamingText,
 } from "./streaming-card.js";
+import { createStreamingSession, type StreamingFetchDeps } from "./streaming-card.test-support.js";
 
 const FEISHU_JSON_MAX_BYTES = 16 * 1024 * 1024;
 type FeishuStreamingFetch = typeof fetch;
@@ -27,11 +28,6 @@ type LocalServer = {
 };
 
 type DispatcherInit = RequestInit & { dispatcher?: unknown };
-type StreamingFetchDeps = {
-  fetchImpl: FeishuStreamingFetch;
-  lookupFn: LookupFn;
-};
-
 type StreamingRequest = {
   url: URL;
   body: string;
@@ -148,44 +144,30 @@ function jsonResponse(payload: unknown, status = 200): Response {
 
 function writeOversizedJson(
   res: ServerResponse,
-  totalBytes: number,
-): { bytesPulled: () => number; canceled: () => boolean } {
-  const chunk = Buffer.alloc(1024 * 1024, 0x20);
-  let bytesPulled = 0;
-  let canceled = false;
-  let ended = false;
-  res.writeHead(200, { "content-type": "application/json" });
-  res.on("close", () => {
-    if (!ended && bytesPulled < totalBytes) {
-      canceled = true;
-    }
+  capBytes: number,
+  jsonPrefix: string,
+): Promise<void> {
+  const clientClosed = new Promise<void>((resolve) => {
+    res.once("close", () => resolve());
   });
-  const prefix = Buffer.from('{"code":0,"msg":"ok","tenant_access_token":"token","padding":"');
-  bytesPulled += prefix.byteLength;
+  const chunk = Buffer.alloc(1024 * 1024, 0x20);
+  const prefix = Buffer.from(jsonPrefix);
+  let bytesWritten = prefix.byteLength;
+  res.writeHead(200, { "content-type": "application/json" });
   res.write(prefix);
   const sendChunk = () => {
-    if (bytesPulled >= totalBytes) {
-      if (!res.destroyed) {
-        ended = true;
-        res.end('"}');
-      }
+    if (res.destroyed || bytesWritten > capBytes) {
       return;
     }
-    const remaining = totalBytes - bytesPulled;
-    const size = Math.min(chunk.byteLength, remaining);
-    bytesPulled += size;
-    const ok = res.write(chunk.subarray(0, size));
-    if (ok) {
+    bytesWritten += chunk.byteLength;
+    if (res.write(chunk)) {
       setImmediate(sendChunk);
       return;
     }
     res.once("drain", sendChunk);
   };
   setImmediate(sendChunk);
-  return {
-    bytesPulled: () => bytesPulled,
-    canceled: () => canceled || (!ended && bytesPulled < totalBytes),
-  };
+  return clientClosed;
 }
 
 function setStreamingSessionInternals(
@@ -216,7 +198,7 @@ function createActiveSession(
     log?: (message: string) => void;
   },
 ): FeishuStreamingSession {
-  const session = new FeishuStreamingSession(
+  const session = createStreamingSession(
     {} as never,
     { appId: options.cardId, appSecret: "secret" },
     options.log,
@@ -351,7 +333,7 @@ describe("FeishuStreamingSession", () => {
     const client = {
       im: { message: { create, reply, delete: remove } },
     } as unknown as ConstructorParameters<typeof FeishuStreamingSession>[0];
-    const session = new FeishuStreamingSession(
+    const session = createStreamingSession(
       client,
       { appId: params.accountId, appSecret: "test-secret" },
       undefined,
@@ -506,21 +488,20 @@ describe("FeishuStreamingSession", () => {
   });
 
   it("rejects oversized streaming tenant-token JSON before buffering the full body", async () => {
-    let streamState:
-      | {
-          bytesPulled: () => number;
-          canceled: () => boolean;
-        }
-      | undefined;
+    let clientClosed: Promise<void> | undefined;
     const deps = await createStreamingFetch(({ url, res }) => {
       if (url.pathname.includes("/auth/")) {
-        streamState = writeOversizedJson(res, FEISHU_JSON_MAX_BYTES * 2);
+        clientClosed = writeOversizedJson(
+          res,
+          FEISHU_JSON_MAX_BYTES,
+          '{"code":0,"msg":"ok","tenant_access_token":"token","padding":"',
+        );
         return;
       }
       writeJson(res, { code: 0, msg: "ok", data: { card_id: "card_oversized_token" } });
     });
 
-    const session = new FeishuStreamingSession(
+    const session = createStreamingSession(
       {} as never,
       {
         appId: "app_oversized_token",
@@ -533,11 +514,7 @@ describe("FeishuStreamingSession", () => {
     await expect(session.start("chat_id", "open_id")).rejects.toThrow(
       /feishu\.streaming-card\.token: JSON response exceeds \d+ bytes/,
     );
-    expect(streamState?.canceled()).toBe(true);
-    expect(streamState?.bytesPulled()).toBeLessThan(FEISHU_JSON_MAX_BYTES * 2);
-    console.log(
-      `[feishu streaming-card bound proof] token over-cap: bytes_pulled=${streamState?.bytesPulled()} cap=${FEISHU_JSON_MAX_BYTES} canceled=${streamState?.canceled()}`,
-    );
+    await expect(clientClosed).resolves.toBeUndefined();
   });
 
   it("aborts a stalled Feishu tenant-token request after the configured timeout", async () => {
@@ -575,7 +552,7 @@ describe("FeishuStreamingSession", () => {
       lookupFn: hermeticPublicLookup,
     };
 
-    const session = new FeishuStreamingSession(
+    const session = createStreamingSession(
       {} as never,
       {
         appId: "app_stalled_token",
@@ -603,12 +580,7 @@ describe("FeishuStreamingSession", () => {
   });
 
   it("rejects oversized streaming card-create JSON before buffering the full body", async () => {
-    let streamState:
-      | {
-          bytesPulled: () => number;
-          canceled: () => boolean;
-        }
-      | undefined;
+    let clientClosed: Promise<void> | undefined;
     const deps = await createStreamingFetch(({ url, res }) => {
       if (url.pathname.includes("/auth/")) {
         writeJson(res, {
@@ -619,10 +591,14 @@ describe("FeishuStreamingSession", () => {
         });
         return;
       }
-      streamState = writeOversizedJson(res, FEISHU_JSON_MAX_BYTES * 2);
+      clientClosed = writeOversizedJson(
+        res,
+        FEISHU_JSON_MAX_BYTES,
+        '{"code":0,"msg":"ok","tenant_access_token":"token","padding":"',
+      );
     });
 
-    const session = new FeishuStreamingSession(
+    const session = createStreamingSession(
       {
         im: {
           message: {
@@ -641,11 +617,7 @@ describe("FeishuStreamingSession", () => {
     await expect(session.start("chat_id", "open_id")).rejects.toThrow(
       /feishu\.streaming-card\.create: JSON response exceeds \d+ bytes/,
     );
-    expect(streamState?.canceled()).toBe(true);
-    expect(streamState?.bytesPulled()).toBeLessThan(FEISHU_JSON_MAX_BYTES * 2);
-    console.log(
-      `[feishu streaming-card bound proof] card-create over-cap: bytes_pulled=${streamState?.bytesPulled()} cap=${FEISHU_JSON_MAX_BYTES} canceled=${streamState?.canceled()}`,
-    );
+    await expect(clientClosed).resolves.toBeUndefined();
   });
 
   it("flushes only the latest authoritative snapshot after the throttle window", async () => {
@@ -808,7 +780,7 @@ describe("FeishuStreamingSession", () => {
       return jsonResponse({ code: 0, msg: "ok" });
     });
     const log = vi.fn();
-    const session = new FeishuStreamingSession(
+    const session = createStreamingSession(
       {} as never,
       { appId: "app_rejected_pending_reasoning_close", appSecret: "secret" },
       log,
@@ -961,7 +933,7 @@ describe("FeishuStreamingSession", () => {
     const session = createActiveSession(deps, {
       cardId: "card_4",
       messageId: "om_4",
-      text: "🔎 Web Search\n\nfinal answer",
+      text: "Web Search\n\nfinal answer",
       lastUpdateTime: 3_000,
     });
 
@@ -1104,7 +1076,7 @@ describe("FeishuStreamingSession", () => {
       expire: Number.MAX_SAFE_INTEGER,
     }));
 
-    await new FeishuStreamingSession(
+    await createStreamingSession(
       client,
       {
         appId: "app_unsafe_token_expiry",
@@ -1116,7 +1088,7 @@ describe("FeishuStreamingSession", () => {
     expect(authTokens).toEqual(["token-1"]);
 
     vi.setSystemTime(Date.now() + 7200 * 1000 - 60_000 + 1);
-    await new FeishuStreamingSession(
+    await createStreamingSession(
       client,
       {
         appId: "app_unsafe_token_expiry",
@@ -1137,7 +1109,7 @@ describe("FeishuStreamingSession", () => {
       tenant_access_token: token,
     }));
 
-    await new FeishuStreamingSession(
+    await createStreamingSession(
       client,
       {
         appId: "app_invalid_clock_token_expiry",
@@ -1149,7 +1121,7 @@ describe("FeishuStreamingSession", () => {
     expect(authTokens).toEqual(["token-1"]);
 
     dateNow.mockReturnValue(7200 * 1000 - 60_000 + 1);
-    await new FeishuStreamingSession(
+    await createStreamingSession(
       client,
       {
         appId: "app_invalid_clock_token_expiry",
@@ -1172,7 +1144,7 @@ describe("FeishuStreamingSession", () => {
       expire: 7200,
     }));
 
-    await new FeishuStreamingSession(
+    await createStreamingSession(
       client,
       {
         appId: "app_invalid_clock_cache_miss",
@@ -1184,7 +1156,7 @@ describe("FeishuStreamingSession", () => {
     expect(authTokens).toEqual(["token-1"]);
 
     dateNow.mockReturnValue(8_640_000_000_000_001);
-    await new FeishuStreamingSession(
+    await createStreamingSession(
       client,
       {
         appId: "app_invalid_clock_cache_miss",

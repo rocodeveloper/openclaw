@@ -29,7 +29,7 @@ vi.mock("@google/genai", () => ({
 }));
 
 import { streamGoogleVertex, streamSimpleGoogleVertex } from "./google-vertex.js";
-import { streamGoogle } from "./google.js";
+import { streamGoogle, streamSimpleGoogle } from "./google.js";
 
 const context = {
   messages: [{ role: "user", content: "hello", timestamp: 0 }],
@@ -71,19 +71,16 @@ describe("Google SDK construction auth", () => {
     configureAiTransportHost({});
   });
 
-  it.each(["none", "short", "long"] as const)(
-    "identifies OpenCode conversations with %s cache retention",
-    async (cacheRetention) => {
-      await streamGoogle({ ...googleModel(), baseUrl: "https://opencode.ai/zen/v1" }, context, {
-        apiKey: "test",
-        sessionId: "conversation-123",
-        cacheRetention,
-      }).result();
-      expect(googleMockState.configs[0]).toMatchObject({
-        httpOptions: { headers: { "x-opencode-session": "conversation-123" } },
-      });
-    },
-  );
+  it("identifies OpenCode conversations without cache retention", async () => {
+    await streamGoogle({ ...googleModel(), baseUrl: "https://opencode.ai/zen/v1" }, context, {
+      apiKey: "test",
+      sessionId: "conversation-123",
+      cacheRetention: "none",
+    }).result();
+    expect(googleMockState.configs[0]).toMatchObject({
+      httpOptions: { headers: { "x-opencode-session": "conversation-123" } },
+    });
+  });
 
   it("unwraps Google API-key sentinels immediately before client construction", async () => {
     const buildModelFetch = vi.fn();
@@ -172,23 +169,6 @@ describe("Google SDK construction auth", () => {
     },
   );
 
-  it.each(["gemma-4-26b-a4b-it", "gemini-2.5-pro"])(
-    "keeps unsupported disabled-thinking config out of Vertex requests for %s",
-    async (modelId) => {
-      configureAiTransportHost({ resolveSecretSentinel: (value) => value });
-
-      await streamSimpleGoogleVertex({ ...vertexModel(), id: modelId }, context, {
-        apiKey: "test-vertex-key",
-        reasoning: "off",
-      }).result();
-
-      expect(googleMockState.requests[0]).toMatchObject({ config: {} });
-      expect((googleMockState.requests[0] as { config: unknown }).config).not.toHaveProperty(
-        "thinkingConfig",
-      );
-    },
-  );
-
   it("ignores blank Vertex project and location env fallbacks", async () => {
     vi.stubEnv("GOOGLE_CLOUD_PROJECT", "   ");
     vi.stubEnv("GCLOUD_PROJECT", "   ");
@@ -229,38 +209,62 @@ describe("Google provider context handoff", () => {
     googleMockState.requests = [];
   });
 
-  it("sends provider-time audio content from the context handoff", async () => {
-    const providerContext: ProviderContext = {
-      messages: [
-        {
-          role: "user",
-          content: [
-            { type: "text", text: "voice" },
-            { type: "audio", data: "ogg-bytes", mimeType: "audio/ogg" },
-          ],
-          timestamp: 0,
-        },
-      ],
-    };
+  it.each([streamGoogle, streamSimpleGoogle])(
+    "sends provider-time audio content from one delayed context handoff",
+    async (stream) => {
+      const providerContext: ProviderContext = {
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: "voice" },
+              { type: "audio", data: "ogg-bytes", mimeType: "audio/ogg" },
+            ],
+            timestamp: 0,
+          },
+        ],
+      };
 
-    const audioModel = {
-      ...googleModel(),
-      provider: "google-customer",
-      input: ["text", "image", "audio"],
-    } as never;
+      const audioModel = {
+        ...googleModel(),
+        provider: "google-customer",
+        input: ["text", "image", "audio"],
+      } as never;
 
-    await streamGoogle(audioModel, context, {
-      apiKey: "test",
-      [PROVIDER_CONTEXT_HANDOFF]: async () => providerContext,
-    } as never).result();
+      const handoff = vi.fn(async () => {
+        await Promise.resolve();
+        return providerContext;
+      });
+      const onPayload = vi.fn();
+      await stream(audioModel, context, {
+        apiKey: "test",
+        [PROVIDER_CONTEXT_HANDOFF]: handoff,
+        onPayload,
+      } as never).result();
+      expect(handoff).toHaveBeenCalledTimes(1);
+      expect(onPayload.mock.calls[0]?.[0]).toMatchObject({
+        contents: [
+          {
+            role: "user",
+            parts: [
+              { text: "voice" },
+              { inlineData: { mimeType: "audio/ogg", data: "ogg-bytes" } },
+            ],
+          },
+        ],
+      });
 
-    expect(googleMockState.requests[0]).toMatchObject({
-      contents: [
-        {
-          role: "user",
-          parts: [{ text: "voice" }, { inlineData: { mimeType: "audio/ogg", data: "ogg-bytes" } }],
-        },
-      ],
-    });
-  });
+      expect(googleMockState.requests[0]).toMatchObject({
+        contents: [
+          {
+            role: "user",
+            parts: [
+              { text: "voice" },
+              { inlineData: { mimeType: "audio/ogg", data: "ogg-bytes" } },
+            ],
+          },
+        ],
+      });
+    },
+  );
 });

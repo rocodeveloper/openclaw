@@ -71,7 +71,7 @@ export function transformProviderMessages<TApi extends Api>(
           model.api === "google-generative-ai" && model.input.includes("audio"),
         ),
       }) as Extract<Message, { role: "user" }>;
-    }) as Message[],
+    }),
     target,
     normalizeToolCallId,
   );

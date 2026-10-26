@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  audioTranscriptKey,
   clearRememberedAudioTranscripts,
   deliversNativeAudio,
   planPreTurnAudioTranscription,
@@ -57,5 +58,24 @@ describe("audio delivery", () => {
 
     expect(transcribe).toHaveBeenCalledTimes(1);
     expect(failing).toHaveBeenCalledTimes(1);
+  });
+  it("isolates identical audio by agent, account, session and admitted message", async () => {
+    const bytes = Buffer.from("same voice note");
+    const scope = ["agent-a", "account-a", "session-a", "message-a"];
+    const transcribe = vi.fn(async () => "spoken words");
+    await Promise.all([
+      transcribeAudioOnce(audioTranscriptKey(bytes, scope), transcribe),
+      transcribeAudioOnce(audioTranscriptKey(bytes, scope), transcribe),
+    ]);
+    expect(transcribe).toHaveBeenCalledTimes(1);
+    for (const index of [0, 1, 2, 3]) {
+      const other = scope.map((value, position) => (position === index ? `${value}-other` : value));
+      await transcribeAudioOnce(audioTranscriptKey(bytes, other), transcribe);
+    }
+    expect(transcribe).toHaveBeenCalledTimes(5);
+    const empty = vi.fn(async () => "  ");
+    await transcribeAudioOnce(audioTranscriptKey(Buffer.from("empty"), scope), empty);
+    await transcribeAudioOnce(audioTranscriptKey(Buffer.from("empty"), scope), empty);
+    expect(empty).toHaveBeenCalledTimes(1);
   });
 });

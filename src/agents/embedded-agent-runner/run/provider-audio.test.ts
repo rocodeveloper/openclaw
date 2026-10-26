@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { createAssistantMessageEventStream } from "@openclaw/llm-core";
+import { MAX_AUDIO_BYTES } from "@openclaw/media-core/constants";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   audioTranscriptKey,
@@ -133,6 +134,42 @@ describe("provider audio delivery", () => {
     }
   });
 
+  it.each(["oversized", "invalid-mime"] as const)(
+    "omits %s audio before provider delivery",
+    async (failure) => {
+      const { stateDir, env } = await setupVoiceNote(tempDirs);
+      const transcribe = vi.fn(async () => "spoken words");
+      const messages = [
+        voiceTurn(failure === "oversized" ? { sizeBytes: MAX_AUDIO_BYTES + 1 } : {}),
+      ];
+      const before = JSON.stringify(messages);
+      try {
+        if (failure === "invalid-mime") {
+          await fs.writeFile(path.join(stateDir, "media", "inbound", "voice.ogg"), "%PDF-1.7\n");
+        }
+        const prepared = await materializeProviderContext({
+          context: { systemPrompt: "system", messages, tools: [] },
+          workspaceDir: stateDir,
+          audio: { native: true, transcribe },
+        });
+        expect(prepared.messages[0]?.content).toContainEqual({
+          type: "text",
+          text:
+            failure === "oversized"
+              ? "(audio omitted: native audio byte limit exceeded)"
+              : "(audio omitted: invalid audio MIME type)",
+        });
+        expect(prepared.messages[0]?.content).not.toContainEqual(
+          expect.objectContaining({ type: "audio" }),
+        );
+        expect(transcribe).not.toHaveBeenCalled();
+        expect(JSON.stringify(messages)).toBe(before);
+      } finally {
+        env.restore();
+      }
+    },
+  );
+
   it("does not add a second transcript for audio already transcribed before the turn", async () => {
     const { stateDir, env } = await setupVoiceNote(tempDirs);
     const transcribe = vi.fn(async () => "spoken words");
@@ -154,6 +191,48 @@ describe("provider audio delivery", () => {
       env.restore();
     }
   });
+
+  it.each(["abort", "stale"] as const)(
+    "does not send provider content when transcription makes the attempt %s",
+    async (revocation) => {
+      const { stateDir, env } = await setupVoiceNote(tempDirs);
+      const controller = new AbortController();
+      let current = true;
+      const transcribe = vi.fn(async () => {
+        if (revocation === "abort") {
+          controller.abort(new Error("attempt revoked"));
+        } else {
+          current = false;
+        }
+        return "spoken words";
+      });
+      const { seen, streamFn } = captureStream();
+      const messages = [voiceTurn()];
+      const before = JSON.stringify(messages);
+      try {
+        const wrapped = wrapStreamFnWithProviderAudioTranscripts(streamFn, transcribe, {
+          workspaceDir: stateDir,
+          assertCurrent: () => {
+            if (!current) {
+              throw new Error("attempt revoked");
+            }
+          },
+        });
+        await expect(
+          wrapped(
+            TEXT_MODEL,
+            { systemPrompt: "system", messages, tools: [] },
+            { signal: controller.signal },
+          ),
+        ).rejects.toThrow("attempt revoked");
+        expect(transcribe).toHaveBeenCalledTimes(1);
+        expect(seen).toEqual([]);
+        expect(JSON.stringify(messages)).toBe(before);
+      } finally {
+        env.restore();
+      }
+    },
+  );
 
   it("falls back from an audio model to non-audio models in one turn with one transcript", async () => {
     const { stateDir, env } = await setupVoiceNote(tempDirs);

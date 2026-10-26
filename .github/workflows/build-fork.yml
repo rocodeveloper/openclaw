@@ -13,7 +13,8 @@ permissions:
   contents: write
 
 env:
-  BASE_TAG: v2026.9.8
+  BASE_TAG: v2026.10.7
+  BASE_SHA: 157d8c2bc3ea2fa183afdc11088e69690bf8e64e
   UPSTREAM_REPO: https://github.com/openclaw/openclaw.git
 
 jobs:
@@ -29,7 +30,10 @@ jobs:
           submodules: false
 
       - name: Fetch base tag
-        run: git fetch --no-tags "$UPSTREAM_REPO" "refs/tags/$BASE_TAG:refs/tags/$BASE_TAG"
+        run: |
+          git fetch --no-tags "$UPSTREAM_REPO" "refs/tags/$BASE_TAG:refs/tags/$BASE_TAG"
+          test "$(git rev-parse "$BASE_TAG^{commit}")" = "$BASE_SHA"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
 
       - name: Leak scan
         env:
@@ -42,20 +46,78 @@ jobs:
           install-bun: "false"
           cache-mode: "off"
 
+      - name: Verify generated source
+        run: |
+          pnpm config:channels:gen
+          pnpm config:docs:gen
+          node scripts/run-vitest.mjs src/config/schema.help.quality.test.ts --update
+          pnpm config:channels:check
+          pnpm config:docs:check
+          mkdir -p .artifacts
+          git diff --binary > .artifacts/fork-generated.patch
+          git diff --exit-code
+
+      - name: Upload generated source drift
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: openclaw-fork-generated-drift
+          path: .artifacts/fork-generated.patch
+          if-no-files-found: ignore
+          retention-days: 7
+
       - name: Typecheck
         run: |
           status=0
           pnpm tsgo:core || status=1
           pnpm tsgo:extensions || status=1
           pnpm tsgo:extensions:test || status=1
+          pnpm tsgo:scripts || status=1
+          pnpm tsgo:test:src || status=1
+          pnpm tsgo:test:packages || status=1
+          pnpm tsgo:test:root || status=1
           exit "$status"
 
       - name: Test fork changes
         run: |
-          mapfile -t fork_tests < <(git diff --name-only --diff-filter=AM "$BASE_TAG...HEAD" -- '*.test.ts')
-          if ((${#fork_tests[@]} > 0)); then
-            node scripts/run-vitest.mjs "${fork_tests[@]}"
-          fi
+          mapfile -t fork_tests < <(git diff --name-only --diff-filter=AM "$BASE_TAG" HEAD -- '*.test.ts')
+          focused_tests=(
+            extensions/google/provider-catalog.test.ts
+            extensions/google/provider-registration.test.ts
+            extensions/google/transport-stream.test.ts
+            extensions/session-scope/index.test.ts
+            extensions/whatsapp/src/auto-reply/monitor/group-auto-register.test.ts
+            extensions/whatsapp/src/auto-reply/monitor/group-gating.audio-preflight.test.ts
+            extensions/whatsapp/src/auto-reply/monitor/on-message.audio-preflight.test.ts
+            extensions/whatsapp/src/auto-reply/monitor/process-message.audio-preflight.test.ts
+            extensions/whatsapp/src/auto-reply/monitor/process-message.test.ts
+            extensions/whatsapp/src/inbound/inbound-mentions.test.ts
+            extensions/whatsapp/src/inbound/outbound-mentions.test.ts
+            extensions/whatsapp/src/inbound/send-api.test.ts
+            extensions/whatsapp/src/inbound/staff-pause.test.ts
+            extensions/whatsapp/src/monitor-inbox.access-and-echo.test.ts
+            extensions/whatsapp/src/monitor-inbox.metadata-cache.test.ts
+            extensions/whatsapp/src/monitor-inbox.socket-lifecycle.test.ts
+            extensions/whatsapp/src/outbound-base.test.ts
+            extensions/wiki-group-mcp/index.test.ts
+            extensions/wiki-group-mcp/src/scope.test.ts
+            extensions/wiki-group-mcp/src/token-store.test.ts
+            packages/ai/src/providers/google-client-auth.test.ts
+            packages/ai/src/providers/transform-messages.test.ts
+            src/agents/embedded-agent-runner/model.provider-hooks.test.ts
+            src/agents/embedded-agent-runner/run/provider-audio.test.ts
+            src/agents/failover/classify.legacy-provider-predicates.test.ts
+            src/agents/model-audio-input.test.ts
+            src/gateway/config-reload.test.ts
+            src/hooks/bundled/outreach-session-end/handler.test.ts
+            src/media-understanding/audio-delivery.test.ts
+            src/media-understanding/runner.native-audio.test.ts
+            test/scripts/copy-hook-metadata.test.ts
+            test/scripts/fork-leak-scan.test.ts
+            test/scripts/upgrade-sh.test.ts
+          )
+          mapfile -t selected_tests < <(printf '%s\n' "${fork_tests[@]}" "${focused_tests[@]}" | sort -u)
+          node scripts/run-vitest.mjs "${selected_tests[@]}"
 
       - name: Build and package
         id: package
@@ -75,6 +137,43 @@ jobs:
             echo "tarball=.artifacts/fork-package/$tarball_name"
             echo "tag=rocobot-${version}-${short_sha}"
           } >> "$GITHUB_OUTPUT"
+
+      - name: Verify fork package contents
+        env:
+          TARBALL: ${{ steps.package.outputs.tarball }}
+          FORK_LEAK_TERMS: ${{ secrets.FORK_LEAK_TERMS }}
+        run: |
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import { execFileSync } from 'node:child_process';
+          import { findLineLeaks, parseTerms } from './scripts/fork-leak-scan.mjs';
+          const archive = process.env.TARBALL;
+          const entries = execFileSync('tar', ['-tf', archive], { encoding: 'utf8' }).trim().split('\n');
+          const readEntry = (entry) => execFileSync('tar', ['-xOf', archive, entry], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+          const terms = parseTerms(process.env.FORK_LEAK_TERMS);
+          assert(terms.length > 0, 'Private scan terms are required');
+          for (const plugin of ['whatsapp', 'discord', 'codex', 'session-scope', 'wiki-group-mcp']) {
+            const root = `package/dist/extensions/${plugin}`;
+            assert(entries.includes(`${root}/package.json`), `Missing packaged plugin ${plugin}`);
+            assert(entries.includes(`${root}/openclaw.plugin.json`), `Missing manifest for ${plugin}`);
+            assert.equal(JSON.parse(readEntry(`${root}/openclaw.plugin.json`)).id, plugin);
+          }
+          const inventory = JSON.parse(readEntry('package/dist/postinstall-inventory.json'));
+          assert(inventory, 'Missing package inventory');
+          const details = execFileSync('tar', ['-tvf', archive], { encoding: 'utf8' }).split('\n');
+          for (const script of ['outreach.sh', 'outreach-session-hook.sh']) {
+            const entry = `package/dist/bundled/outreach-session-end/${script}`;
+            assert(entries.includes(entry), `Missing ${script}`);
+            assert(details.some((line) => line.startsWith('-rw-r--r--') && line.endsWith(` ${entry}`)), `Wrong mode for ${script}`);
+          }
+          const customEntries = entries.filter((entry) => /^package\/dist\/(extensions\/(session-scope|wiki-group-mcp)\/|bundled\/outreach-session-end\/)/.test(entry) && /\.(js|json|md|sh)$/.test(entry));
+          for (const entry of customEntries) {
+            for (const line of readEntry(entry).split('\n')) {
+              assert.equal(findLineLeaks(line, terms).length, 0, `Private content found in ${entry}`);
+            }
+          }
+          console.log(`Verified fork plugins, outreach script modes, and ${customEntries.length} fork package files`);
+          NODE
 
       - name: Upload tarball
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -101,9 +200,11 @@ jobs:
           {
             echo "Base: \`$BASE_TAG\`"
             echo
-            echo "Fork commits:"
+            echo "Reviewed fork source changes:"
             echo
-            git log --reverse --format='- %h %s' "$BASE_TAG..HEAD"
+            echo '```text'
+            git diff --stat "$BASE_SHA" "$GITHUB_SHA"
+            echo '```'
           } > "$RUNNER_TEMP/release-notes.md"
           if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             release_target="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json targetCommitish --jq .targetCommitish)"

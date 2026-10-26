@@ -204,14 +204,14 @@ export function createWhatsAppGroupMetadataCacheOwner(params: GroupMetadataCache
     jid: string,
     text: string,
   ): Promise<{ text: string; mentionedJids: string[] }> => {
-    if (isJidGroup(jid) !== true || !mayContainWhatsAppOutboundMention(text)) {
+    if (!mayContainWhatsAppOutboundMention(text)) {
       return { text, mentionedJids: [] };
     }
-    const meta = await get(jid);
+    const meta = isJidGroup(jid) === true ? await get(jid) : undefined;
     return resolveWhatsAppOutboundMentions({
       chatJid: jid,
       text,
-      participants: meta.mentionParticipants,
+      participants: meta?.mentionParticipants,
     });
   };
 
@@ -219,22 +219,16 @@ export function createWhatsAppGroupMetadataCacheOwner(params: GroupMetadataCache
     jid: string,
     content: AnyMessageContent,
   ): Promise<AnyMessageContent> => {
-    if ("text" in content && typeof content.text === "string") {
-      const resolved = await resolveOutboundMentions(jid, content.text);
-      return addWhatsAppOutboundMentionsToContent(
-        { ...content, text: resolved.text } as AnyMessageContent,
-        resolved.mentionedJids,
-      );
+    const field = "text" in content && typeof content.text === "string" ? "text" : "caption";
+    const text = (content as { text?: unknown; caption?: unknown })[field];
+    if (typeof text !== "string") {
+      return content;
     }
-    const caption = (content as { caption?: unknown }).caption;
-    if (typeof caption === "string") {
-      const resolved = await resolveOutboundMentions(jid, caption);
-      return addWhatsAppOutboundMentionsToContent(
-        { ...content, caption: resolved.text } as AnyMessageContent,
-        resolved.mentionedJids,
-      );
-    }
-    return content;
+    const resolved = await resolveOutboundMentions(jid, text);
+    return addWhatsAppOutboundMentionsToContent(
+      { ...content, [field]: resolved.text } as AnyMessageContent,
+      resolved.mentionedJids,
+    );
   };
 
   const start = () => {

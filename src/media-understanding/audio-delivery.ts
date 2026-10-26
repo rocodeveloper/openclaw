@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 import type { OpenClawConfig } from "../config/types.js";
+import type { MediaUnderstandingCapabilityConfig } from "../config/types.tools.js";
 
-export type AudioDeliveryMode = "auto" | "native" | "transcript";
+export type AudioDeliveryMode = NonNullable<MediaUnderstandingCapabilityConfig["delivery"]>;
 
 export type PreTurnAudioPlan = "transcribe" | "prime" | "defer";
 
@@ -33,8 +34,14 @@ export function planPreTurnAudioTranscription(params: {
   return "defer";
 }
 
-export function audioTranscriptKey(bytes: Uint8Array): string {
-  return createHash("sha256").update(bytes).digest("hex");
+export function audioTranscriptKey(
+  bytes: Uint8Array,
+  scope?: readonly (string | undefined)[],
+): string {
+  return createHash("sha256")
+    .update(JSON.stringify(scope ?? []))
+    .update(bytes)
+    .digest("hex");
 }
 
 export function transcribeAudioOnce(

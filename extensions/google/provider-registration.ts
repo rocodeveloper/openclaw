@@ -39,7 +39,10 @@ function normalizeGoogleMediaInput(
     input: [
       ...input,
       ...(supportsVideo ? ["video"] : []),
-      ...(isAiStudioGeminiRoute ? ["audio"] : []),
+      ...(isAiStudioGeminiRoute ||
+      (ctx.model.api === "google-generative-ai" && (ctx.model.input as string[]).includes("audio"))
+        ? ["audio"]
+        : []),
     ],
   } as typeof ctx.model;
 }

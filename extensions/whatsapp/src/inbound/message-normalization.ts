@@ -1,9 +1,6 @@
 import type { AnyMessageContent, WAMessage } from "baileys";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
-import {
-  checkInboundAccessControl,
-  type AcceptedInboundAccessControlResult,
-} from "./access-control.js";
+import { checkInboundAccessControl } from "./access-control.js";
 import { isRecentOutboundMessage } from "./dedupe.js";
 import { hasInboundUserContent } from "./extract.js";
 import type { WhatsAppGroupMetadataCacheOwner } from "./group-metadata-cache.js";
@@ -17,18 +14,9 @@ import {
   resolveStaffPauseMinutes,
 } from "./staff-pause.js";
 
-export type WhatsAppNormalizedInboundMessage = {
-  id?: string;
-  remoteJid: string;
-  group: boolean;
-  participantJid?: string;
-  from: string;
-  senderE164: string | null;
-  groupSubject?: string;
-  groupParticipants?: string[];
-  messageTimestampMs?: number;
-  access: AcceptedInboundAccessControlResult;
-};
+export type WhatsAppNormalizedInboundMessage = NonNullable<
+  Awaited<ReturnType<ReturnType<typeof createWhatsAppInboundMessageNormalizer>["normalize"]>>
+>;
 
 export function createWhatsAppInboundMessageNormalizer(options: {
   cfg: OpenClawConfig;
@@ -62,7 +50,7 @@ export function createWhatsAppInboundMessageNormalizer(options: {
     return true;
   };
 
-  const normalize = async (msg: WAMessage): Promise<WhatsAppNormalizedInboundMessage | null> => {
+  const normalize = async (msg: WAMessage) => {
     const id = msg.key?.id ?? undefined;
     const remoteJid = msg.key?.remoteJid;
     if (!remoteJid || remoteJid.endsWith("@status") || remoteJid.endsWith("@broadcast")) {

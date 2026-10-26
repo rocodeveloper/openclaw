@@ -86,7 +86,11 @@ const doctorResultEvidence = {
   configChanges: z.array(UpdateDoctorConfigChangeSchema).optional(),
   configWriteRefusal: UpdateDoctorConfigWriteRefusalSchema.optional(),
   databaseWrites: z
-    .object({ unchanged: z.boolean(), generations: z.record(z.string(), z.string().nullable()) })
+    .object({
+      unchanged: z.boolean(),
+      fromGenerations: z.record(z.string(), z.string().nullable()).optional(),
+      generations: z.record(z.string(), z.string().nullable()),
+    })
     .optional()
     .catch(undefined),
 };
@@ -140,17 +144,9 @@ export function collectUpdateDoctorFailureFacts(error: unknown): UpdateFailureFa
 
 /** Keep optional health diagnostics bounded across Doctor and its update parent. */
 export function normalizeUpdatePostInstallDoctorWarnings(warnings: readonly string[]): string[] {
-  const normalized: string[] = [];
-  for (const warning of warnings) {
-    const message = truncateUtf16Safe(warning.trim(), 500);
-    if (message) {
-      normalized.push(message);
-      if (normalized.length === 32) {
-        break;
-      }
-    }
-  }
-  return normalized;
+  return [
+    ...new Set(warnings.map((warning) => truncateUtf16Safe(warning.trim(), 500)).filter(Boolean)),
+  ].slice(0, 32);
 }
 
 export type DoctorConfigCapture = {
@@ -164,8 +160,14 @@ export type DoctorConfigCapture = {
 export type UpdateDoctorWriteAuthority = {
   inputHash: string;
   assertCurrent: () => void;
+  commandAuthority?: import("./update-managed-command-custody.js").ManagedCommandProcessAuthority;
   postCoreSchemaRepair?: { runId: string; assertCurrent: () => void };
   databaseGenerations?: UpdateDatabaseGenerations;
+  originalRecoveryCapture?: {
+    runId: string;
+    installRoot: string;
+    ref?: import("./update-recovery-baseline-capture.js").UpdateRecoveryBaselineRef;
+  };
 };
 
 /** Receipts describe the caller's existing maintenance interval without owning its lifecycle. */
@@ -183,6 +185,7 @@ export function createUpdateDoctorDatabaseWriteCapture(
     return undefined;
   }
   let expectedGenerations: UpdateDatabaseGenerations | undefined = { ...input };
+  let fromGenerations: UpdateDatabaseGenerations | undefined;
   let unchanged = true;
   let receipt: UpdateDatabaseWriteReceipt | undefined;
   const read = async () => {
@@ -219,6 +222,7 @@ export function createUpdateDoctorDatabaseWriteCapture(
       receipt = undefined;
       const generations = await read();
       if (generations && expectedGenerations) {
+        fromGenerations ??= generations;
         // Earlier receipts or another process's writes must never become our baseline.
         unchanged &&= Object.entries(expectedGenerations).every(
           ([pathname, generation]) => generations[pathname] === generation,
@@ -227,9 +231,13 @@ export function createUpdateDoctorDatabaseWriteCapture(
     },
     async settle() {
       const generations = await read();
-      if (generations) {
-        receipt = { unchanged, generations };
-        expectedGenerations = generations;
+      if (generations && expectedGenerations) {
+        // Maintenance excludes Gateway writers, not independent SQLite writers.
+        // Without transaction attribution, even Doctor-time changes are unknown.
+        unchanged &&= Object.entries(expectedGenerations).every(
+          ([pathname, generation]) => generations[pathname] === generation,
+        );
+        receipt = { unchanged, fromGenerations, generations };
       }
     },
   };
@@ -423,17 +431,22 @@ export async function writeUpdatePostInstallDoctorResult(params: {
   resultPath: string;
   result: UpdatePostInstallDoctorResult;
 }): Promise<void> {
+  const result = normalizeUpdatePostInstallDoctorResult(params.result);
+  if (params.resultPath === "-") {
+    // Native update owners consume the final classified result after the child settles.
+    const { defaultRuntime } = await import("../runtime.js");
+    defaultRuntime.writeStdout(
+      `${UPDATE_POST_INSTALL_DOCTOR_RESULT_PATH_ENV}=${JSON.stringify(result)}`,
+    );
+    return;
+  }
   const resultPath = resolveSafeUpdatePostInstallDoctorResultPath(params.resultPath);
   // Advisory details can contain config-derived IDs; pre-existing paths must fail closed.
-  await fs.writeFile(
-    resultPath,
-    `${JSON.stringify(normalizeUpdatePostInstallDoctorResult(params.result))}\n`,
-    {
-      encoding: "utf8",
-      mode: 0o600,
-      flag: "wx",
-    },
-  );
+  await fs.writeFile(resultPath, `${JSON.stringify(result)}\n`, {
+    encoding: "utf8",
+    mode: 0o600,
+    flag: "wx",
+  });
 }
 
 export async function consumeUpdatePostInstallDoctorResult(

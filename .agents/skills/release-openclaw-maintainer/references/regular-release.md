@@ -21,10 +21,11 @@ prints `Next:` with the exact commands to run before resuming.
 Each phase runs the existing helpers, in the order the manual fallback below
 describes: `cut` creates `release/YYYY.M.PATCH` at the confirmed SHA and refuses
 until version, changelog, and contribution record are on the branch tip;
-`validate` tags `release-publish/<sha12>-<epoch>` once at the tooling SHA,
+`validate` tags `release-publish/<sha12>-<epoch>` once at independent P,
 dispatches `pnpm ci:full-release` with `release_profile=stable` and
 `run_release_soak=true` (matching nightly evidence is reused by the helper),
-retains the exact observed validation request, and stops on a failed parent for
+uses Q=C with separate admission P arguments, retains the exact validation
+request, and stops on a failed parent for
 diagnosis and operator recovery; `publish` runs
 `pnpm release:candidate`, pushes the final tag, starts the macOS validate and
 preflight lanes from the tag, dispatches `OpenClaw Release Publish` once with
@@ -71,7 +72,7 @@ phase-specific gates and `$release-openclaw-ci` for dispatch/recovery.
 Use one release cut named
 exactly `release/YYYY.M.PATCH` (no `-cutN` or staging suffixes), version
 alignment plus changelog and contribution record in one commit so Code SHA =
-Release SHA, one Tooling SHA frozen at dispatch, and one validation parent.
+Release SHA, Q=C, independently pinned P, and one validation parent.
 Record the cut time; aim to seal validation in approximately 20 minutes and
 publish within an hour, with actual timing recorded separately. Backports are
 merged `main` PRs cherry-picked before dispatch (pure-data model/catalog
@@ -82,12 +83,31 @@ for a required-lane defect. A second cut (re-basing the candidate on newer
 merged `main` commits only for a confirmed release blocker and name each one in
 the handoff record.
 
-Run deterministic source preflight, then validate the exact Code SHA:
+After the final backport or release commit and before every release-branch push
+that can feed validation, run the integrated exact-HEAD gate:
+
+```bash
+pnpm release:push
+```
+
+This wrapper refreshes and pins `origin/main`, requires a clean canonical
+`release/YYYY.M.PATCH` worktree, captures `HEAD`, and runs changed
+static/type checks, production dead-code analysis, and changed tests from a
+fresh detached worktree with a frozen dependency install. It pushes that
+captured SHA itself only after every gate passes and the source branch,
+worktree, and HEAD remain unchanged. Do not use a separate `git push`:
+validation and push must stay one operation. A failed gate, concurrent commit,
+or non-fast-forward remote update blocks the push and FRV dispatch. Record the
+passing SHA and comparison base in the handoff; do not substitute
+`release:prepush`, a worker's partial check, or an earlier branch state.
+
+Then run deterministic source preflight and validate the same exact Code SHA:
 
 ```bash
 PUBLICATION_SELECTION='{"route":"normal","npmDistTag":"beta","publishOpenclawNpm":true,"pluginPublishScope":"all-publishable","plugins":[]}'
 node scripts/full-release-validation-at-sha.mjs \
-  --sha <code-sha> --target-ref release/YYYY.M.PATCH --workflow-sha <tooling-sha> \
+  --sha <code-sha> --target-ref release/YYYY.M.PATCH \
+  --admission-workflow-sha <publisher-sha> --admission-workflow-ref main \
   -f validation_purpose=publish -f publication_selection_json="$PUBLICATION_SELECTION" \
   -f release_profile=stable -f run_release_soak=true
 ```
@@ -97,13 +117,19 @@ This example qualifies a final version for beta-first publication. Select
 for the prepared button. A beta prerelease uses the beta profile and soak policy.
 Keep that intended selection on later notes-only parents. This admits committed
 publication source, not registry eligibility or publication authority.
+Publish-purpose dispatches first run the `pnpm release:candidate` release-notes
+and contribution-record gates at the Code SHA and refuse to dispatch on failure.
+A record target lost to a squash merge needs a corrected record and a new Code SHA.
 
-Record and reuse the full trusted Tooling SHA. Beta-publish uses
+Record and reuse C/Q and independently trusted P. The helper defaults Q=C;
+`--workflow-sha`, if explicit here, must equal C. P performs lightweight admission
+before this same helper creates the Q transport and dispatches FRV. Missing Q
+contracts need deliberate backports; never borrow future-main requirements.
+Beta-publish uses
 `release_profile=beta`, `run_release_soak=false` (`npm-beta-v1` for a qualifying
 canonical beta target). Stable-publish requires `release_profile=stable` or
 `full`, soak, and blocking performance. Beta-profile evidence cannot qualify
-stable. Every selected validation lane except policy-owned `windows-node-ci`
-and authenticated `recorded-flake` jobs in `normalCi` must pass.
+stable. Every selected validation lane must pass.
 See [shared release boundaries](../SKILL.md#shared-release-boundaries),
 [validation](validation.md), and
 [publication recovery](publication-recovery.md). Diagnose
@@ -111,13 +137,14 @@ failures and use the controller's bounded retry for affected required proof.
 Continue eligible parents to seal; a parent that produced its own sealed
 candidate artifacts requires a new parent with verified successful evidence
 reuse. Classify each selected test failure as a real blocker or a flake before
-rerunning, per the shared release boundaries. Only a confirmed product
+rerunning, per the shared release boundaries. An untouched test or passing
+replay alone does not prove a flake or a fix. A confirmed product
 defect that a required lane blocks on creates a new Code SHA: the
 update/install path (previous stable updates to the candidate, install smoke,
 pack budget, worker bundle), the bytes to publish, or another required gate
-proven by diagnosis. A diagnosed infrastructure flake or a publish-tooling re-tag never does. Tooling,
-credentials, infrastructure or wrapper failure keeps the candidate and recovers
-the failed surface. Use [publication recovery](publication-recovery.md) for
+proven by diagnosis. A diagnosed infrastructure flake or a publish-tooling re-tag never does. A frozen qualification harness repair also creates a new C/Q. Independent P-only
+tooling, credentials, infrastructure, or monitor failures keep C/Q and recover
+the failed surface without relabeling original evidence. Use [publication recovery](publication-recovery.md) for
 classification. Keep PR CI and supporting workflows running while the parent
 runs. Use the [release CI recovery guidance](../../release-openclaw-ci/SKILL.md#deferred-ci-recovery)
 only for runs already deferred by historical workflows.
@@ -138,8 +165,10 @@ Its exact npm/OCI descriptors must belong to that SHA and satisfy the selected
 release profile's required gates. No second commit or validation run is needed
 solely to name a Release SHA.
 
-If notes change after Code qualification, use `$openclaw-changelog-update`
-with current main for the canonical PR history and commit the selected
+If notes change after Code qualification, including the single refresh that
+credits validation-recovery backports once the final Code SHA is green, use
+`$openclaw-changelog-update` with current main for the canonical PR history and
+commit the selected
 `CHANGELOG/YYYY.M.PATCH.md`, with any matching record and root index updates.
 The complete Code-to-Release delta must include that entry and only those
 paths, without renames or deletions, to optionally use
@@ -200,7 +229,11 @@ Match channel, route, and profile to the frozen validation selection. The
 channel and route default to `beta` and `normal`; final versions require
 stable/full evidence with soak and blocking performance, even on the beta channel.
 `--workflow-sha` pins both the helper checkout and publication tag to the recorded
-Tooling SHA. Alternatively, `--publish-workflow-ref` selects an existing
+P SHA, not Q. Fresh checklist dispatch delegates to the canonical SHA-pinned
+helper and retains `frv-request.json`; it never dispatches FRV directly. An existing
+request reconciles its original inputs, and historical separate npm preflight
+run IDs remain supported. Only the canonical helper's explicit `--resume-request`
+may continue a candidate request before Q ref mutation/dispatch. Alternatively, `--publish-workflow-ref` selects an existing
 publication tag while the same-checkout bootstrap fetches the workflow branch
 tip; verify that the executing helper's Tooling SHA matches that tag, without
 moving it or silently changing qualification identity.
@@ -234,7 +267,8 @@ Keep their exact run/attempt identities in the handoff's publication rows.
 For a complete regular beta or stable release, use `OpenClaw Release Prepare`
 before publication and `OpenClaw Release Button` when ready to publish. Both run
 from the same frozen `release-publish/<sha12>-<id>` tooling tag. The existing
-release tag, successful npm preflight, exact Full Release Validation attempt,
+release tag, exact Full Release Validation attempt with sealed core and plugin
+npm artifacts,
 reviewed SDK evidence, and any explicitly selected Windows source evidence
 must already be available. The publisher consumes sealed acknowledgement defaults;
 the candidate helper retains its explicit SDK acknowledgement argument. This does not create a version or release tag.
@@ -242,10 +276,11 @@ the candidate helper retains its explicit SDK acknowledgement argument. This doe
 Run `pnpm release:candidate` with `--publish-workflow-ref` set to that protected
 tag. Its evidence bundle and terminal output include a **prepare once** command
 for complete regular releases. After creating the frozen release tag, run that
-command. It dispatches the existing npm and ClawHub preflight workflows in
-parallel, builds and qualifies their final package bytes, and seals a readiness
-receipt only after every package can be downloaded and verified. Preparation
-does not publish packages or change public selectors.
+command. It adopts the plugin npm artifact qualified by Full Release Validation,
+dispatches the ClawHub preflight, and seals both immutable descriptors into a
+readiness receipt only after every package can be downloaded and verified.
+Preparation does not rebuild plugin npm tarballs, publish packages, or change
+public selectors.
 
 ClawHub packages needing publication or adoption must have the normal
 trusted-publisher binding. Use the existing ClawHub owner workflow to finish
@@ -336,14 +371,17 @@ If its summary reports the token unavailable,
 dispatch the sync by hand before the verify runs. For manual work, poll the
 registry yourself before the sync or verification. Run postpublish
 verification from a checkout of the Release SHA (a newer tooling checkout
-reports main-only bundled plugin files as missing), with the tooling identity
-exported, or it fails `SHA-pinned release-publish ref does not match`:
+reports main-only bundled plugin files as missing):
 
 ```bash
-OPENCLAW_NPM_EXPECTED_WORKFLOW_REF=refs/tags/release-publish/<tooling-sha12>-<epoch> \
-OPENCLAW_NPM_EXPECTED_WORKFLOW_SHA=<tooling-sha> \
 node --import tsx scripts/openclaw-npm-postpublish-verify.ts <version>
 ```
+
+Without `OPENCLAW_NPM_EXPECTED_WORKFLOW_REF`/`_SHA`, the verifier derives the
+publish tooling from the attested `release-publish/*` tag and accepts it only
+when GitHub still has that exact lightweight tag at the attested commit and the
+commit is reachable from `main` (requires `gh` auth). Set both variables only to
+pin an explicit identity; a partial override is rejected.
 
 If `Complete publish workflows` fails after core publication, inspect the
 original child and registry evidence before recovery. Core and every published
@@ -373,9 +411,8 @@ failure without republishing npm.
 Run [postpublish confidence](validation.md#postpublish-confidence) against the
 exact published package. For a beta-to-latest promotion, retain available
 deferred-lane results, including published-package Telegram, while enforcing
-the shared required publication proofs. All selected tests outside the
-`windows-node-ci` and authenticated `recorded-flake` classes must pass before publication; retain advisory
-failures in the release evidence. Run safe
+the shared required publication proofs. All selected tests must pass before
+publication. Run safe
 independent rosters concurrently while controlling local Docker/VM load.
 Classify failures before admitting a fix to the next beta; do not scan moving
 main or automatically rerun all groups. An operator's beta-attempt cap counts

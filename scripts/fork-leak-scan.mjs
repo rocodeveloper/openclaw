@@ -99,7 +99,7 @@ function main() {
   }
   const diff = execFileSync(
     "git",
-    ["diff", "--unified=0", "--no-color", "--no-ext-diff", `${base}...${head}`],
+    ["diff", "--unified=0", "--no-color", "--no-ext-diff", base, head],
     { encoding: "utf8", maxBuffer: 512 * 1024 * 1024 },
   );
   const leaks = findDiffLeaks(diff, terms);

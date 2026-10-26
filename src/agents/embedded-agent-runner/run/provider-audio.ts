@@ -4,6 +4,7 @@ import {
   deliversNativeAudio,
   resolveAudioDeliveryMode,
 } from "../../../media-understanding/audio-delivery.js";
+import type { AudioTranscriptScope } from "../../../media-understanding/provider-audio-transcript.js";
 import type { AgentMessage } from "../../runtime/index.js";
 import { appendProviderAudioTranscripts, type ProviderAudioDelivery } from "./images.js";
 
@@ -22,6 +23,9 @@ export function resolveAttemptAudioDelivery(params: {
   modelInput: readonly string[] | undefined;
   agentDir?: string;
   workspaceDir?: string;
+  scope?: AudioTranscriptScope;
+  signal?: AbortSignal;
+  assertCurrent?: () => void;
 }): AttemptAudioDelivery {
   const mode = resolveAudioDeliveryMode(params.cfg);
   if (mode === "transcript") {
@@ -36,6 +40,9 @@ export function resolveAttemptAudioDelivery(params: {
       cfg: params.cfg ?? {},
       agentDir: params.agentDir,
       workspaceDir: params.workspaceDir,
+      scope: params.scope,
+      signal: params.signal,
+      assertCurrent: params.assertCurrent,
     });
   };
   return deliversNativeAudio(mode, params.modelInput)
@@ -49,6 +56,8 @@ export function wrapStreamFnWithProviderAudioTranscripts(
   options: AudioTranscriptOptions,
 ): StreamFn {
   return async (model, context, streamOptions) => {
+    streamOptions?.signal?.throwIfAborted();
+    options.assertCurrent?.();
     const messages = context?.messages;
     if (!Array.isArray(messages)) {
       return await streamFn(model, context, streamOptions);
@@ -58,6 +67,8 @@ export function wrapStreamFnWithProviderAudioTranscripts(
       transcribe,
       signal: streamOptions?.signal,
     });
+    streamOptions?.signal?.throwIfAborted();
+    options.assertCurrent?.();
     return await streamFn(
       model,
       nextMessages === messages

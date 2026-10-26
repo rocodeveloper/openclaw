@@ -15,7 +15,6 @@ import { isDefaultInstallIdentity } from "../../config/paths.js";
 import { readGatewayServiceState, resolveGatewayService } from "../../daemon/service.js";
 import { FILE_LOCK_TIMEOUT_ERROR_CODE, withFileLock } from "../../infra/file-lock.js";
 import { runPackagePostInstallVerification } from "../../infra/package-update-verification-step.js";
-import { readUpdateStateSchemaVersions } from "../../infra/update-candidate-state.js";
 import { NativePackageRollbackError } from "../../infra/update-native-package-stage.js";
 import { createUpdateRun, getUpdateRun } from "../../infra/update-run-ledger.js";
 import { renderUpdateRunReport } from "../../infra/update-run-report.js";
@@ -23,6 +22,7 @@ import type { UpdateRunResult } from "../../infra/update-runner-types.js";
 import * as processRunner from "../../process/exec.js";
 import { closeOpenClawStateDatabaseAsync } from "../../state/openclaw-state-db.js";
 import type { UpdateConfigSnapshot } from "./update-command-config-snapshot.js";
+import * as packageIdentity from "./update-command-package-identity.js";
 import { inspectManagedGatewayServiceBeforeUpdate } from "./update-command-service-plan.js";
 import { createWindowsTaskAutoStartRecovery } from "./update-command-windows-task.js";
 
@@ -34,7 +34,12 @@ const mocks = vi.hoisted(() => ({
   serviceState: vi.fn<typeof import("../../daemon/service.js").readGatewayServiceState>(),
   execSchtasks: vi.fn<typeof import("../../daemon/schtasks-exec.js").execSchtasks>(),
 }));
-vi.mock("../../daemon/schtasks-exec.js", () => ({ execSchtasks: mocks.execSchtasks }));
+// mock-isolation: Rollback owns a synthetic task; native enable/disable must not reach the host.
+vi.mock("../../daemon/schtasks-exec.js", () => ({
+  execSchtasks: mocks.execSchtasks,
+  execScheduledTaskEnabledChange: (taskName: string, enabled: boolean) =>
+    mocks.execSchtasks(["/Change", "/TN", taskName, enabled ? "/ENABLE" : "/DISABLE"]),
+}));
 vi.mock("../../daemon/service.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../daemon/service.js")>()),
   readGatewayServiceState: mocks.serviceState,
@@ -53,8 +58,10 @@ import { inspectActivatedUpdateState } from "./update-command-migrated.js";
 import * as packageModule from "./update-command-package.js";
 import { rollbackFailedUpdate } from "./update-command-rollback.js";
 import {
+  ACTIVE_ROLLBACK_IDENTITY_FAILURES,
   expectActiveRollbackIdentity,
   expectDoctorRollback,
+  readRollbackFixtureSchemaVersions,
   registerRollbackReportTests,
   writeDoctorRollbackConfig,
   writeDoctorRollbackReceipt,
@@ -163,7 +170,7 @@ describe("verified package rollback", () => {
       const configSnapshot = await readPreviousConfig(env);
       const config = configSnapshot.sourceConfigBeforeMigrations ?? configSnapshot.sourceConfig;
       const run = { runId: createUpdateRun({ trigger: "cli" }, { env }).runId, env };
-      const schemaVersions = await readUpdateStateSchemaVersions({
+      const schemaVersions = await readRollbackFixtureSchemaVersions({
         stateDir: env.OPENCLAW_STATE_DIR,
         config,
         env,
@@ -252,7 +259,7 @@ describe("verified package rollback", () => {
       const env = { OPENCLAW_STATE_DIR: stateDir, OPENCLAW_WINDOWS_TASK_NAME: "rollback-fixture" };
       const configSnapshot = await readPreviousConfig(env);
       const config = configSnapshot.sourceConfigBeforeMigrations ?? configSnapshot.sourceConfig;
-      const schemaVersions = await readUpdateStateSchemaVersions({ stateDir, config, env });
+      const schemaVersions = await readRollbackFixtureSchemaVersions({ stateDir, config, env });
       let enabled = true;
       const actions: string[] = [];
       mocks.execSchtasks.mockImplementation(async (args) => {
@@ -460,7 +467,7 @@ describe("verified package rollback", () => {
       if (!change.startsWith("new-agent")) {
         setVersion(agent, 3);
       }
-      const schemaVersions = await readUpdateStateSchemaVersions({ stateDir, config: {} });
+      const schemaVersions = await readRollbackFixtureSchemaVersions({ stateDir, config: {} });
       if (change === "new-shared-deferred") {
         expect(schemaVersions.find((entry) => entry.path === shared)?.userVersion).toBeNull();
         setVersion(shared, 7);
@@ -621,7 +628,7 @@ describe("verified package rollback", () => {
         };
       });
       if (change === "identity-read-failed") {
-        vi.spyOn(packageModule, "readPackageUpdateIdentity").mockRejectedValueOnce(
+        vi.spyOn(packageIdentity, "readPackageUpdateIdentity").mockRejectedValueOnce(
           new Error("Diagnostic identity read failed after verified restoration"),
         );
       }
@@ -858,7 +865,7 @@ describe("verified package rollback", () => {
     fs.writeFileSync(configPath, original);
     const configSnapshot = await readPreviousConfig(env);
     const config = configSnapshot.sourceConfigBeforeMigrations ?? configSnapshot.sourceConfig;
-    const schemaVersions = await readUpdateStateSchemaVersions({ stateDir, config, env });
+    const schemaVersions = await readRollbackFixtureSchemaVersions({ stateDir, config, env });
     fs.writeFileSync(configPath, candidate);
     const lockOptions = {
       retries: { retries: 0, factor: 1, minTimeout: 1, maxTimeout: 1 },
@@ -986,23 +993,16 @@ describe("verified package rollback", () => {
     expect(mocks.restart).not.toHaveBeenCalled();
   });
 
-  it.each([
-    "source-failed",
-    "restored-shims-failed",
-    "partial-restore",
-    "restart-unhealthy",
-    "restart-refused",
-    "restart-threw",
-    "restart-cleanup",
-    "restart-timeout",
-    "restart-verified",
-  ] as const)("retains active installation identity after %s", async (failure) => {
-    await expectActiveRollbackIdentity({
-      failure,
-      candidateRoot,
-      previousRoot,
-      stateDir: serviceStateDir,
-      restart: mocks.restart,
-    });
-  });
+  it.each(ACTIVE_ROLLBACK_IDENTITY_FAILURES)(
+    "retains active installation identity after %s",
+    async (failure) => {
+      await expectActiveRollbackIdentity({
+        failure,
+        candidateRoot,
+        previousRoot,
+        stateDir: serviceStateDir,
+        restart: mocks.restart,
+      });
+    },
+  );
 });

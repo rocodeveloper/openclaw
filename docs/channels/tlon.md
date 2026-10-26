@@ -191,6 +191,16 @@ The owner ship is authorized everywhere: DM invites are always auto-accepted, gr
 always auto-accepted, and channel messages always pass authorization. The owner does not need to
 be in `dmAllowlist`, `defaultAuthorizedShips`, or `groupInviteAllowlist`.
 
+Group DMs are the exception. Tlon does not verify who wrote a group DM message, so group DM
+messages never carry owner authority: owner commands, approval replies, and admin commands only
+work in a 1:1 DM with the bot. A group DM message whose claimed author is on `dmAllowlist` is still
+answered, but as an ordinary unverified sender.
+
+Pending DM requests saved by versions before this behavior cannot be told apart from group DM
+claims. Approving one still adds the ship to `dmAllowlist`, but its stored message is not
+replayed. The approval confirmation tells the owner the message was not processed and that the
+sender has to send it again.
+
 When `ownerShip` is set, unauthorized requests do not just get dropped — they queue a pending
 approval and DM the owner:
 
@@ -219,8 +229,12 @@ full, the monitor sends the owner one saturation notice and does not admit more 
 until pending items are resolved. Failed notice delivery is retried up to three times per full-queue
 episode. Admitting a new request after capacity becomes available starts a new episode, so filling
 the queue again can send another notice in the same monitor run. Rejected requesters must retry
-after capacity is available; pending DM and group invite snapshots remain retryable rather than
+after capacity is available; pending DM and group invite updates remain retryable rather than
 being acknowledged.
+
+Group invite updates apply to one group at a time. Revoked, removed, or completed invitations
+clear that group's duplicate suppression so a later invitation can be handled under the current
+auto-accept and allowlist settings.
 
 ## Auto-accept settings
 

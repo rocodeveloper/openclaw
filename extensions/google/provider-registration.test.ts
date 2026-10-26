@@ -126,7 +126,7 @@ describe("buildGoogleProvider createStreamFn", () => {
           provider: providerId,
           api: "google-generative-ai",
           baseUrl,
-          input: ["text", "image", "audio"] as never,
+          input: ["text", "image"],
         }),
       } as never);
 
@@ -136,6 +136,21 @@ describe("buildGoogleProvider createStreamFn", () => {
       );
     },
   );
+
+  it("preserves explicitly configured audio on a custom Google transport", () => {
+    const normalized = buildGoogleProvider().normalizeResolvedModel?.({
+      provider: "google-customer",
+      modelId: "custom-audio-model",
+      model: model({
+        id: "custom-audio-model",
+        provider: "google-customer",
+        api: "google-generative-ai",
+        baseUrl: "https://proxy.example.test/v1beta",
+        input: ["text", "audio"] as never,
+      }),
+    } as never);
+    expect(normalized?.input).toEqual(["text", "audio"]);
+  });
 
   it.each(["google-vertex"])(
     "does not resolve AI Studio credentials for %s-only catalog scope",

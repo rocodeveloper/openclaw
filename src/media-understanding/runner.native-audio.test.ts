@@ -22,7 +22,10 @@ const cfg = {
   models: { providers: { openai: { apiKey: "test-key", models: [] } } },
 } as unknown as OpenClawConfig;
 
-async function runAudio(activeModel?: { provider: string; model: string }) {
+async function runAudio(
+  activeModel?: { provider: string; model: string },
+  config?: NonNullable<NonNullable<OpenClawConfig["tools"]>["media"]>["audio"],
+) {
   const transcribeAudio = vi.fn(async () => ({ text: "spoken words", model: "whisper-1" }));
   let result: Awaited<ReturnType<typeof runCapability>> | undefined;
   let mediaPath = "";
@@ -31,6 +34,7 @@ async function runAudio(activeModel?: { provider: string; model: string }) {
     result = await runCapability({
       capability: "audio",
       cfg,
+      config,
       ctx,
       attachments: cache,
       media,
@@ -69,6 +73,13 @@ describe("runCapability native audio handoff", () => {
 
   it("primes one transcript for a non-audio fallback while the turn keeps raw audio", async () => {
     audioPlan.current = "prime";
+    let finishPrime!: () => void;
+    primeAudioTranscript.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finishPrime = resolve;
+        }),
+    );
 
     const { result, transcribeAudio, mediaPath } = await runAudio({
       provider: "google",
@@ -79,9 +90,30 @@ describe("runCapability native audio handoff", () => {
     expect(result.outputs).toEqual([]);
     expect(primeAudioTranscript).toHaveBeenCalledTimes(1);
     expect(primeAudioTranscript).toHaveBeenCalledWith(
-      expect.objectContaining({ path: mediaPath, cfg }),
+      expect.objectContaining({ fact: expect.objectContaining({ path: mediaPath }), cfg }),
     );
+    finishPrime();
   });
+
+  it.each([
+    [{ enabled: false }, "disabled", "capability-disabled"],
+    [{ scope: { default: "deny" } }, "scope-deny", "scope-denied"],
+  ] as const)(
+    "keeps media admission before native handoff for %j",
+    async (config, outcome, disposition) => {
+      audioPlan.current = "prime";
+      const { result, transcribeAudio } = await runAudio(
+        { provider: "google", model: "gemini-3.5-flash-lite" },
+        config,
+      );
+      expect(resolvePreTurnAudioPlan).not.toHaveBeenCalled();
+      expect(primeAudioTranscript).not.toHaveBeenCalled();
+      expect(transcribeAudio).not.toHaveBeenCalled();
+      expect(result.outputs).toEqual([]);
+      expect(result.decision.outcome).toBe(outcome);
+      expect(result.decision.attachmentDispositions).toEqual({ 0: { kind: disposition } });
+    },
+  );
 
   it("transcribes before the turn when the plan needs a transcript", async () => {
     audioPlan.current = "transcribe";
