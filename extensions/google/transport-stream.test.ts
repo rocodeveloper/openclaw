@@ -543,6 +543,70 @@ describe("google transport stream", () => {
     expect(onPayload).toHaveBeenCalledOnce();
   });
 
+  it.each([false, true])(
+    "waits for an audio-only managed handoff and respects cancellation (%s)",
+    async (cancel) => {
+      mockGoogleTextResponse();
+      const prepared = Promise.withResolvers<ProviderContext>();
+      const controller = new AbortController();
+      const handoff = vi.fn(() => prepared.promise);
+      const pending = runGeminiStreamResult({
+        model: buildGeminiModel({ provider: "google-customer", input: ["text", "audio"] }),
+        context: { messages: [{ role: "user", content: "fallback", timestamp: 0 }] },
+        options: withProviderContextHandoff(
+          { apiKey: "fixture-key", signal: controller.signal },
+          handoff,
+        ),
+      });
+      try {
+        await vi.waitFor(() => expect(handoff).toHaveBeenCalledOnce());
+        expect(guardedFetchMock).not.toHaveBeenCalled();
+        if (cancel) {
+          controller.abort();
+        }
+      } finally {
+        prepared.resolve({
+          messages: [
+            {
+              role: "user",
+              content: [
+                { type: "text", text: "literal voice text" },
+                { type: "audio", mimeType: "audio/ogg", data: "T2dnUw==" },
+              ],
+              timestamp: 0,
+            },
+          ],
+        });
+      }
+      const result = await pending;
+      expect(handoff).toHaveBeenCalledOnce();
+      if (cancel) {
+        expect(result.stopReason).toBe("aborted");
+        expect(guardedFetchMock).not.toHaveBeenCalled();
+      } else {
+        expect(result.stopReason).toBe("stop");
+        const body = parseRequestJsonBody(
+          requireRequestInit(
+            requireMockCall(guardedFetchMock, 0, "guarded fetch"),
+            "guarded fetch",
+          ),
+        );
+        expect(body).toMatchObject({
+          contents: [
+            {
+              role: "user",
+              parts: [
+                { text: "literal voice text" },
+                { inlineData: { mimeType: "audio/ogg", data: "T2dnUw==" } },
+              ],
+            },
+          ],
+        });
+        expect(guardedFetchMock).toHaveBeenCalledOnce();
+      }
+    },
+  );
+
   it("omits cloned and hook-injected video slots", async () => {
     mockGoogleTextResponse();
     const trustedData = "trusted-video-base64";
