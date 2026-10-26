@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import pMap from "p-map";
 import type { ActiveMediaModel } from "../../packages/media-understanding-common/src/active-model.js";
@@ -9,7 +10,13 @@ import { finalizeInboundContext } from "../auto-reply/reply/inbound-context.js";
 import type { MsgContext } from "../auto-reply/templating.js";
 import type { OpenClawConfig } from "../config/types.js";
 import { logVerbose, shouldLogVerbose } from "../globals.js";
+import { normalizeMediaFacts } from "../media/media-facts.js";
 import { resolveAttachmentKind, selectAttachments } from "./attachments.js";
+import {
+  assertMediaExecutionCurrent,
+  type MediaExecutionGuards,
+  type ScheduleAudioPrime,
+} from "./audio-delivery.js";
 import { DEFAULT_ECHO_TRANSCRIPT_FORMAT, sendTranscriptEcho } from "./echo-transcript.js";
 import type { ExtractedFileImage } from "./extracted-file-images.js";
 import { extractFileContext, type LocalPathSelfServeUpgrade } from "./file-context.js";
@@ -126,22 +133,29 @@ function renderMediaAttachmentMarkers(params: {
   });
 }
 
-export async function applyMediaUnderstanding(params: {
-  ctx: MsgContext;
-  cfg: OpenClawConfig;
-  agentId?: string;
-  agentDir?: string;
-  workspaceDir?: string;
-  providers?: Record<string, MediaUnderstandingProvider>;
-  activeModel?: ActiveMediaModel;
-  /** Limit utility processing while preserving native image and video inputs. */
-  processingMode?: "audio-only" | "files-only" | "audio-and-files";
-  /** Render local paths immediately only when the caller owns the final tool surface. */
-  selfServeLocalPaths?: boolean;
-  /** Attachment indexes the caller (ACP) has already resolved into native turn attachments. */
-  deliveredImageIndexes?: ReadonlySet<number>;
-}): Promise<ApplyMediaUnderstandingResult> {
+export async function applyMediaUnderstanding(
+  params: MediaExecutionGuards & {
+    scheduleAudioPrime?: ScheduleAudioPrime;
+    ctx: MsgContext;
+    cfg: OpenClawConfig;
+    agentId?: string;
+    agentDir?: string;
+    workspaceDir?: string;
+    providers?: Record<string, MediaUnderstandingProvider>;
+    activeModel?: ActiveMediaModel;
+    /** Limit utility processing while preserving native image and video inputs. */
+    processingMode?: "audio-only" | "files-only" | "audio-and-files";
+    /** Render local paths immediately only when the caller owns the final tool surface. */
+    selfServeLocalPaths?: boolean;
+    /** Attachment indexes the caller (ACP) has already resolved into native turn attachments. */
+    deliveredImageIndexes?: ReadonlySet<number>;
+  },
+): Promise<ApplyMediaUnderstandingResult> {
+  assertMediaExecutionCurrent(params);
   const { ctx, cfg } = params;
+  ctx.media = normalizeMediaFacts(ctx.media, {
+    messageId: ctx.MessageSidFull ?? ctx.MessageSid ?? randomUUID(),
+  });
   const commandCandidates = [ctx.CommandBody, ctx.RawBody, ctx.Body];
   const originalUserText = commandCandidates
     .map((value) => normalizeOptionalString(value))
@@ -197,10 +211,14 @@ export async function applyMediaUnderstanding(params: {
           providerRegistry,
           config: cfg.tools?.media?.[capability],
           activeModel: params.activeModel,
+          signal: params.signal,
+          assertCurrent: params.assertCurrent,
+          scheduleAudioPrime: params.scheduleAudioPrime,
         };
         try {
           return await runCapability(request);
         } catch (err) {
+          assertMediaExecutionCurrent(params);
           if (shouldLogVerbose()) {
             logVerbose(`Media understanding task failed: ${String(err)}`);
           }
@@ -231,6 +249,7 @@ export async function applyMediaUnderstanding(params: {
       },
       { concurrency: resolveConcurrency(cfg), stopOnError: false },
     );
+    assertMediaExecutionCurrent(params);
     if (providerRegistryError) {
       throw providerRegistryError.error;
     }
@@ -249,6 +268,10 @@ export async function applyMediaUnderstanding(params: {
       for (const output of entry.outputs) {
         audioOutputsByAttachmentIndex.set(output.attachmentIndex, output);
         audioAttachmentIndexes.add(output.attachmentIndex);
+        const fact = ctx.media?.[output.attachmentIndex];
+        if (output.kind === "audio.transcription" && fact) {
+          fact.transcribed = true;
+        }
       }
       // Capability results retain image/audio/video order. Project audio in the
       // runner's selected order so placeholders honor attachments.prefer and

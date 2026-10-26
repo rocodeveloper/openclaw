@@ -31,13 +31,7 @@ export function selectAttachments(params: {
   policy?: MediaUnderstandingAttachmentsConfig;
 }): { selected: MediaAttachment[]; droppedAttachmentIndexes: number[] } {
   const { capability, attachments, policy } = params;
-  const matches = attachments.filter((item) => {
-    // Preflight audio has already been consumed; rerunning STT would duplicate transcript output.
-    if (capability === "audio" && item.alreadyTranscribed) {
-      return false;
-    }
-    return resolveAttachmentKind(item) === capability;
-  });
+  const matches = attachments.filter((item) => resolveAttachmentKind(item) === capability);
   if (matches.length === 0) {
     return { selected: [], droppedAttachmentIndexes: [] };
   }
@@ -47,7 +41,9 @@ export function selectAttachments(params: {
   const maxAttachments = policy?.maxAttachments ?? DEFAULT_MAX_ATTACHMENTS;
   const limit = mode === "all" ? Math.max(1, maxAttachments) : 1;
   return {
-    selected: ordered.slice(0, limit),
+    selected: ordered
+      .slice(0, limit)
+      .filter((item) => capability !== "audio" || !item.alreadyTranscribed),
     droppedAttachmentIndexes: ordered.slice(limit).map((attachment) => attachment.index),
   };
 }

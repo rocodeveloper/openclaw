@@ -6,6 +6,11 @@ import { logVerbose } from "../../globals.js";
 import { isAbortError } from "../../infra/abort-signal.js";
 import { formatErrorMessage } from "../../infra/errors.js";
 import type { ApplyMediaUnderstandingResult } from "../../media-understanding/apply.js";
+import {
+  assertMediaExecutionCurrent,
+  type MediaExecutionGuards,
+  type ScheduleAudioPrime,
+} from "../../media-understanding/audio-delivery.js";
 import { createLazyImportLoader } from "../../shared/lazy-promise.js";
 import { resolveCommandTurnTargetSessionKey } from "../command-turn-context.js";
 import type { RuntimeMsgContext as MsgContext } from "../templating.js";
@@ -24,23 +29,31 @@ export function hasLinkCandidate(ctx: MsgContext): boolean {
   return Boolean(message && /\bhttps?:\/\/\S+/i.test(message));
 }
 
-export async function applyMediaUnderstandingIfNeeded(params: {
-  ctx: MsgContext;
-  cfg: OpenClawConfig;
-  agentId?: string;
-  agentDir?: string;
-  workspaceDir?: string;
-  activeModel: { provider: string; model: string };
-  processingMode?: "audio-only" | "files-only" | "audio-and-files";
-  selfServeLocalPaths?: boolean;
-}): Promise<ApplyMediaUnderstandingResult | undefined> {
+export async function applyMediaUnderstandingIfNeeded(
+  params: MediaExecutionGuards & {
+    scheduleAudioPrime?: ScheduleAudioPrime;
+    ctx: MsgContext;
+    cfg: OpenClawConfig;
+    agentId?: string;
+    agentDir?: string;
+    workspaceDir?: string;
+    activeModel: { provider: string; model: string };
+    processingMode?: "audio-only" | "files-only" | "audio-and-files";
+    selfServeLocalPaths?: boolean;
+  },
+): Promise<ApplyMediaUnderstandingResult | undefined> {
   if (!hasInboundMediaForUnderstanding(params.ctx)) {
     return undefined;
   }
   try {
     const { applyMediaUnderstanding } = await mediaUnderstandingApplyRuntimeLoader.load();
+    assertMediaExecutionCurrent(params);
     return await applyMediaUnderstanding(params);
   } catch (err) {
+    assertMediaExecutionCurrent(params);
+    if (isAbortError(err)) {
+      throw err;
+    }
     mediaUnderstandingApplyRuntimeLoader.clear();
     logVerbose(
       `media understanding failed, proceeding with raw content: ${formatErrorMessage(err)}`,

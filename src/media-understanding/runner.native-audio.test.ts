@@ -1,7 +1,8 @@
+import { createServer } from "node:http";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/types.js";
-import { runCapability } from "./runner.js";
-import { withAudioFixture } from "./runner.test-utils.js";
+import { createMediaAttachmentCache, normalizeMediaAttachments, runCapability } from "./runner.js";
+import { createSafeAudioFixtureBuffer, withAudioFixture } from "./runner.test-utils.js";
 
 const audioPlan = vi.hoisted(() => ({ current: "transcribe" as "transcribe" | "prime" | "defer" }));
 const resolvePreTurnAudioPlan = vi.hoisted(() => vi.fn(async () => audioPlan.current));
@@ -25,6 +26,7 @@ const cfg = {
 async function runAudio(
   activeModel?: { provider: string; model: string },
   config?: NonNullable<NonNullable<OpenClawConfig["tools"]>["media"]>["audio"],
+  guards: { signal?: AbortSignal } = {},
 ) {
   const transcribeAudio = vi.fn(async () => ({ text: "spoken words", model: "whisper-1" }));
   let result: Awaited<ReturnType<typeof runCapability>> | undefined;
@@ -32,6 +34,10 @@ async function runAudio(
   await withAudioFixture("openclaw-native-audio", async ({ ctx, media, cache, mediaPath: p }) => {
     mediaPath = p;
     result = await runCapability({
+      ...guards,
+      scheduleAudioPrime: (run) => {
+        void run(guards);
+      },
       capability: "audio",
       cfg,
       config,
@@ -114,6 +120,100 @@ describe("runCapability native audio handoff", () => {
       expect(result.decision.attachmentDispositions).toEqual({ 0: { kind: disposition } });
     },
   );
+
+  it("transcribes selected URL audio while deferring local audio without resetting the attachment cap", async () => {
+    audioPlan.current = "defer";
+    let requests = 0;
+    const server = createServer((_request, response) => {
+      requests += 1;
+      response.writeHead(200, { "Content-Type": "audio/wav" });
+      response.end(createSafeAudioFixtureBuffer());
+    });
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", resolve);
+    });
+    try {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        throw new Error("fixture address unavailable");
+      }
+      await withAudioFixture("openclaw-mixed-audio", async ({ ctx }) => {
+        const mediaCtx = {
+          media: [
+            ...ctx.media,
+            { url: `http://127.0.0.1:${address.port}/selected.wav`, contentType: "audio/wav" },
+            { url: `http://127.0.0.1:${address.port}/dropped.wav`, contentType: "audio/wav" },
+          ],
+        };
+        const media = normalizeMediaAttachments(mediaCtx);
+        const attachments = createMediaAttachmentCache(media, {
+          ssrfPolicy: { allowPrivateNetwork: true },
+        });
+        try {
+          const result = await runCapability({
+            capability: "audio",
+            ctx: mediaCtx,
+            media,
+            attachments,
+            cfg: {
+              plugins: { enabled: false },
+              tools: {
+                media: {
+                  models: [
+                    {
+                      type: "cli",
+                      command: process.execPath,
+                      args: ["-e", 'process.stdout.write("remote words")'],
+                      capabilities: ["audio"],
+                    },
+                  ],
+                },
+              },
+            },
+            config: { attachments: { mode: "all", maxAttachments: 2 } },
+            providerRegistry: new Map(),
+            activeModel: { provider: "google", model: "gemini-3.5-flash-lite" },
+          });
+          expect(result.outputs).toEqual([
+            expect.objectContaining({ attachmentIndex: 1, text: "remote words" }),
+          ]);
+          expect(result.decision.attachmentDispositions).toEqual({
+            0: { kind: "handed-to-native-audio" },
+            1: { kind: "handled" },
+            2: { kind: "not-selected" },
+          });
+          expect(requests).toBe(1);
+        } finally {
+          await attachments.cleanup();
+        }
+      });
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("rejects cancellation during model discovery before starting transcription", async () => {
+    const discovery = Promise.withResolvers<"transcribe">();
+    const entered = Promise.withResolvers<void>();
+    const controller = new AbortController();
+    resolvePreTurnAudioPlan.mockImplementationOnce(() => {
+      entered.resolve();
+      return discovery.promise;
+    });
+    const result = runAudio({ provider: "google", model: "gemini-3.5-flash-lite" }, undefined, {
+      signal: controller.signal,
+    });
+    const outcome = result.then(
+      () => "accepted",
+      () => "cancelled",
+    );
+    await entered.promise;
+    controller.abort();
+    discovery.resolve("transcribe");
+    await expect(outcome).resolves.toBe("cancelled");
+  });
 
   it("transcribes before the turn when the plan needs a transcript", async () => {
     audioPlan.current = "transcribe";

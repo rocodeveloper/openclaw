@@ -1,33 +1,35 @@
-import { randomUUID } from "node:crypto";
 import { MAX_AUDIO_BYTES } from "@openclaw/media-core/constants";
+import { MediaUnderstandingSkipError } from "../../packages/media-understanding-common/src/errors.js";
 import type { RuntimeMsgContext } from "../auto-reply/templating.js";
 import type { OpenClawConfig } from "../config/types.js";
 import type { MediaFact } from "../media/media-facts.js";
-import { audioTranscriptKey, transcribeAudioOnce } from "./audio-delivery.js";
+import {
+  assertMediaExecutionCurrent,
+  audioTranscriptKey,
+  transcribeAudioOnce,
+  type MediaExecutionGuards,
+} from "./audio-delivery.js";
 import { resolveMediaUnderstandingScope } from "./scope.js";
 
 export type AudioTranscriptScope = Pick<
   RuntimeMsgContext,
-  "AccountId" | "SessionKey" | "MessageSid" | "Surface" | "Provider" | "ChatType"
+  "AccountId" | "SessionKey" | "Surface" | "Provider" | "ChatType"
 > & { agentId?: string };
 
-type ProviderAudioTranscriptParams = {
+type ProviderAudioTranscriptParams = MediaExecutionGuards & {
   fact: MediaFact;
   bytes: Uint8Array;
   cfg: OpenClawConfig;
   agentDir?: string;
   workspaceDir?: string;
   scope?: AudioTranscriptScope;
-  signal?: AbortSignal;
-  assertCurrent?: () => void;
 };
 
 export async function transcribeProviderAudioFact(
   params: ProviderAudioTranscriptParams,
 ): Promise<string | undefined> {
   const scope = params.scope ?? {};
-  params.signal?.throwIfAborted();
-  params.assertCurrent?.();
+  assertMediaExecutionCurrent(params);
   if (
     params.cfg.tools?.media?.audio?.enabled === false ||
     resolveMediaUnderstandingScope({
@@ -39,39 +41,47 @@ export async function transcribeProviderAudioFact(
   ) {
     return undefined;
   }
-  const key = audioTranscriptKey(params.bytes, [
-    scope.agentId ?? params.agentDir,
-    scope.AccountId ?? "default",
-    scope.SessionKey,
-    scope.Surface ?? scope.Provider,
-    scope.ChatType,
-    (scope.agentId || params.agentDir) && scope.SessionKey
-      ? (scope.MessageSid ?? randomUUID())
-      : randomUUID(),
-    params.fact.messageId,
-  ]);
-  const transcript = await transcribeAudioOnce(key, async () => {
-    const {
-      buildProviderRegistry,
-      createMediaAttachmentCache,
-      normalizeMediaAttachments,
-      resolveMediaAttachmentLocalRoots,
-      runCapability,
-    } = await import("./runner.js");
-    params.signal?.throwIfAborted();
-    params.assertCurrent?.();
-    const workspaceDir = params.fact.workspaceDir ?? params.workspaceDir;
-    const ctx = {
-      ...scope,
-      media: [{ ...params.fact, kind: "audio" as const, transcribed: false }],
-    };
-    const media = normalizeMediaAttachments(ctx);
-    const cache = createMediaAttachmentCache(media, {
-      localPathRoots: resolveMediaAttachmentLocalRoots({ cfg: params.cfg, ctx, workspaceDir }),
-      workspaceDir,
-      ssrfPolicy: params.cfg.tools?.web?.fetch?.ssrfPolicy,
+  const {
+    buildProviderRegistry,
+    createMediaAttachmentCache,
+    normalizeMediaAttachments,
+    resolveMediaAttachmentLocalRoots,
+    runCapability,
+  } = await import("./runner.js");
+  assertMediaExecutionCurrent(params);
+  const workspaceDir = params.fact.workspaceDir ?? params.workspaceDir;
+  const ctx = {
+    ...scope,
+    media: [{ ...params.fact, kind: "audio" as const, transcribed: false }],
+  };
+  const media = normalizeMediaAttachments(ctx);
+  const cache = createMediaAttachmentCache(media, {
+    localPathRoots: resolveMediaAttachmentLocalRoots({ cfg: params.cfg, ctx, workspaceDir }),
+    includeDefaultLocalPathRoots: false,
+    workspaceDir,
+    ssrfPolicy: params.cfg.tools?.web?.fetch?.ssrfPolicy,
+  });
+  try {
+    const { buffer } = await cache.getBuffer({
+      attachmentIndex: 0,
+      maxBytes: Math.min(
+        MAX_AUDIO_BYTES,
+        params.cfg.tools?.media?.audio?.maxBytes ?? MAX_AUDIO_BYTES,
+      ),
+      timeoutMs: (params.cfg.tools?.media?.audio?.timeoutSeconds ?? 60) * 1000,
+      signal: params.signal,
     });
-    try {
+    assertMediaExecutionCurrent(params);
+    const key = audioTranscriptKey(buffer, [
+      scope.agentId ?? params.agentDir,
+      scope.AccountId ?? "default",
+      scope.SessionKey,
+      scope.Surface ?? scope.Provider,
+      scope.ChatType,
+      params.fact.messageId,
+    ]);
+    const transcribe = async () => {
+      assertMediaExecutionCurrent(params);
       const result = await runCapability({
         capability: "audio",
         cfg: params.cfg,
@@ -83,32 +93,46 @@ export async function transcribeProviderAudioFact(
         workspaceDir,
         providerRegistry: buildProviderRegistry(undefined, params.cfg),
         config: params.cfg.tools?.media?.audio,
+        signal: params.signal,
+        assertCurrent: params.assertCurrent,
       });
-      params.signal?.throwIfAborted();
-      params.assertCurrent?.();
+      assertMediaExecutionCurrent(params);
       return result.outputs.find((entry) => entry.kind === "audio.transcription")?.text;
-    } finally {
-      await cache.cleanup();
+    };
+    const transcript =
+      (scope.agentId || params.agentDir) && scope.SessionKey && params.fact.messageId
+        ? await transcribeAudioOnce(key, transcribe, params)
+        : await transcribe();
+    assertMediaExecutionCurrent(params);
+    return transcript;
+  } catch (error) {
+    assertMediaExecutionCurrent(params);
+    if (error instanceof MediaUnderstandingSkipError) {
+      return undefined;
     }
-  });
-  params.signal?.throwIfAborted();
-  params.assertCurrent?.();
-  return transcript;
+    throw error;
+  } finally {
+    await cache.cleanup();
+  }
 }
 
-export async function primeAudioTranscript(params: {
-  fact: MediaFact;
-  ctx: RuntimeMsgContext;
-  cfg: OpenClawConfig;
-  agentId?: string;
-  agentDir?: string;
-  workspaceDir?: string;
-}): Promise<void> {
+export async function primeAudioTranscript(
+  params: MediaExecutionGuards & {
+    fact: MediaFact;
+    ctx: RuntimeMsgContext;
+    cfg: OpenClawConfig;
+    agentId?: string;
+    agentDir?: string;
+    workspaceDir?: string;
+  },
+): Promise<void> {
+  assertMediaExecutionCurrent(params);
   const {
     createMediaAttachmentCache,
     normalizeMediaAttachments,
     resolveMediaAttachmentLocalRoots,
   } = await import("./runner.js");
+  assertMediaExecutionCurrent(params);
   const ctx = { ...params.ctx, media: [params.fact] };
   const media = normalizeMediaAttachments(ctx);
   const cache = createMediaAttachmentCache(media, {
@@ -117,6 +141,7 @@ export async function primeAudioTranscript(params: {
       ctx,
       workspaceDir: params.workspaceDir,
     }),
+    includeDefaultLocalPathRoots: false,
     workspaceDir: params.workspaceDir,
     ssrfPolicy: params.cfg.tools?.web?.fetch?.ssrfPolicy,
   });
@@ -128,7 +153,9 @@ export async function primeAudioTranscript(params: {
         params.cfg.tools?.media?.audio?.maxBytes ?? MAX_AUDIO_BYTES,
       ),
       timeoutMs: (params.cfg.tools?.media?.audio?.timeoutSeconds ?? 60) * 1000,
+      signal: params.signal,
     });
+    assertMediaExecutionCurrent(params);
     await transcribeProviderAudioFact({
       ...params,
       bytes: buffer,

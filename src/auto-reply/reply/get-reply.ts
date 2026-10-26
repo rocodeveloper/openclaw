@@ -28,12 +28,14 @@ import { type OpenClawConfig, getRuntimeConfig } from "../../config/config.js";
 import { resolveGroupSessionKey } from "../../config/sessions/group.js";
 import { isSessionWorkStartInvalidatedError } from "../../config/sessions/lifecycle.js";
 import { logVerbose } from "../../globals.js";
-import { racePromiseWithAbortSignal } from "../../infra/abort-signal.js";
+import { isAbortError, racePromiseWithAbortSignal } from "../../infra/abort-signal.js";
 import { measureDiagnosticsTimelineSpan } from "../../infra/diagnostics-timeline.js";
 import { isFastTestRuntimeEnv } from "../../infra/env.js";
 import { formatErrorMessage } from "../../infra/errors.js";
+import { redactSensitiveText } from "../../logging/redact.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
 import type { ApplyMediaUnderstandingResult } from "../../media-understanding/apply.js";
+import type { ScheduleAudioPrime } from "../../media-understanding/audio-delivery.js";
 import type { ExtractedFileImage } from "../../media-understanding/extracted-file-images.js";
 import { hasStagedMediaFacts, normalizeMediaFacts } from "../../media/media-facts.js";
 import { defaultRuntime } from "../../runtime.js";
@@ -123,6 +125,52 @@ export async function getReplyFromConfig(
   configOverride?: OpenClawConfig,
 ): Promise<ReplyPayload | ReplyPayload[] | undefined> {
   const opts = prepareInternalGetReplyOptions(options, ctx);
+  const priming = new AbortController();
+  const abortPriming = () => priming.abort(opts?.abortSignal?.reason);
+  if (opts?.abortSignal?.aborted) {
+    abortPriming();
+  } else {
+    opts?.abortSignal?.addEventListener("abort", abortPriming, { once: true });
+  }
+  const assertPreprocessingCurrent = () => {
+    assertReplyPreprocessingActive(opts?.abortSignal);
+    opts?.operatorAuthority?.assertCurrent();
+    opts?.internalEventExecution?.assertCurrent?.();
+  };
+  const pendingPrimes = new Set<Promise<void>>();
+  const scheduleAudioPrime: ScheduleAudioPrime = (run) => {
+    assertPreprocessingCurrent();
+    priming.signal.throwIfAborted();
+    const pending = run({ signal: priming.signal, assertCurrent: assertPreprocessingCurrent })
+      .catch((error: unknown) => {
+        if (!priming.signal.aborted && !isAbortError(error)) {
+          logVerbose(
+            `audio transcript priming failed: ${redactSensitiveText(formatErrorMessage(error), { mode: "tools" })}`,
+          );
+        }
+      })
+      .finally(() => pendingPrimes.delete(pending));
+    pendingPrimes.add(pending);
+  };
+  try {
+    return await resolveReplyFromConfig(ctx, opts, configOverride, {
+      assertCurrent: assertPreprocessingCurrent,
+      scheduleAudioPrime,
+    });
+  } finally {
+    priming.abort();
+    opts?.abortSignal?.removeEventListener("abort", abortPriming);
+    pendingPrimes.clear();
+  }
+}
+
+async function resolveReplyFromConfig(
+  ctx: MsgContext,
+  opts: ReturnType<typeof prepareInternalGetReplyOptions>,
+  configOverride: OpenClawConfig | undefined,
+  preprocessing: { assertCurrent: () => void; scheduleAudioPrime: ScheduleAudioPrime },
+): Promise<ReplyPayload | ReplyPayload[] | undefined> {
+  const { assertCurrent: assertPreprocessingCurrent, scheduleAudioPrime } = preprocessing;
   const isFastTestEnv = isFastTestRuntimeEnv();
   const preparedReplyDispatchRuntime = configOverride
     ? undefined
@@ -461,6 +509,9 @@ export async function getReplyFromConfig(
         ctx: finalized,
         ...workspaceContext,
         activeModel: { provider, model },
+        signal: optsWithSkillFilter?.abortSignal,
+        assertCurrent: assertPreprocessingCurrent,
+        scheduleAudioPrime,
         // Cache and classify now; the final provider and owner policy are
         // resolved later, immediately before the embedded turn starts.
         selfServeLocalPaths: false,

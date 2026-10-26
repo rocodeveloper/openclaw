@@ -112,6 +112,39 @@ describe("provider audio delivery", () => {
     }
   });
 
+  it.each([{ enabled: false }, { scope: { default: "deny" as const } }])(
+    "keeps native delivery when optional understanding is %j",
+    async (audioConfig) => {
+      const { stateDir, env } = await setupVoiceNote(tempDirs);
+      try {
+        const delivery = resolveAttemptAudioDelivery({
+          cfg: { tools: { media: { audio: audioConfig } } },
+          modelInput: ["text", "audio"],
+          workspaceDir: stateDir,
+        });
+        expect(delivery.kind).toBe("native");
+        if (delivery.kind !== "native") {
+          throw new Error("native delivery unavailable");
+        }
+        const prepared = await materializeProviderContext({
+          context: { systemPrompt: "system", messages: [voiceTurn()], tools: [] },
+          workspaceDir: stateDir,
+          audio: delivery.audio,
+        });
+        expect(prepared.messages[0]?.content).toContainEqual({
+          type: "audio",
+          data: OGG.toString("base64"),
+          mimeType: "audio/ogg",
+        });
+        await expect(
+          delivery.audio.transcribe({ kind: "audio", url: "media://inbound/voice.ogg" }, OGG),
+        ).resolves.toBeUndefined();
+      } finally {
+        env.restore();
+      }
+    },
+  );
+
   it("gives a model without audio input the transcript and no audio bytes", async () => {
     const { stateDir, env } = await setupVoiceNote(tempDirs);
     const transcribe = vi.fn(async () => "spoken words");

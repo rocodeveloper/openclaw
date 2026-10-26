@@ -1,7 +1,9 @@
 // Tests media-only get-reply runs and sandboxed media attachment handling.
-import "./get-reply-run.runtime-mocks.test-support.js";
+import fs from "node:fs/promises";
+import path from "node:path";
 import { expectDefined } from "@openclaw/normalization-core";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import "./get-reply-run.runtime-mocks.test-support.js";
 import { awaitGateBeforeSettlement, createDeferred } from "../../../test/helpers/promise.js";
 import { createAdmittedRunOperatorAuthority } from "../../agents/admitted-run-context.js";
 import { createTestAdmittedRunContext } from "../../agents/admitted-run-context.test-support.js";
@@ -31,8 +33,10 @@ import {
 import { MESSAGE_TOOL_ONLY_DELIVERY_HINT } from "../../plugin-sdk/message-tool-delivery-hints.js";
 import { beginSessionWorkAdmission } from "../../sessions/session-lifecycle-admission.js";
 import { prepareSessionParticipantInput } from "../../sessions/session-participant-input.js";
+import { withTestDir } from "../../test-helpers/temp-dir.js";
 import { normalizeSessionDeliveryState } from "../../utils/delivery-context.shared.js";
 import { hasControlCommand } from "../command-detection.js";
+import type { MsgContext } from "../templating.js";
 import { runReplyAgent } from "./agent-runner-run.js";
 import { resolveReplyDirectiveRouting } from "./get-reply-directives-routing.js";
 import { shouldUseReplyFastTestRuntime } from "./get-reply-fast-path.js";
@@ -288,6 +292,8 @@ vi.mock("../../config/sessions/ambient-transcript-watermark.js", () => ({
 }));
 
 vi.mock("../../globals.js", () => ({
+  shouldLogVerbose: () => false,
+  logWarn: vi.fn(),
   logVerbose: vi.fn(),
 }));
 
@@ -1171,6 +1177,166 @@ describe("runPreparedReply media-only handling", () => {
       role: "user",
       content: "timestamped followup",
       timestamp: 1_710_000_000_000,
+    });
+  });
+
+  it("persists real preprocessing completion before provider transcript replay", async () => {
+    await withTestDir({ prefix: "openclaw-persisted-transcript-" }, async (dir) => {
+      const { applyMediaUnderstanding } = await import("../../media-understanding/apply.js");
+      const { createSafeAudioFixtureBuffer } =
+        await import("../../media-understanding/runner.test-utils.js");
+      const { appendProviderAudioTranscripts } =
+        await import("../../agents/embedded-agent-runner/run/images.js");
+      const { transcribeProviderAudioFact } =
+        await import("../../media-understanding/provider-audio-transcript.js");
+      const mediaPath = path.join(dir, "voice.wav");
+      const callsPath = path.join(dir, "calls.txt");
+      await fs.writeFile(mediaPath, createSafeAudioFixtureBuffer());
+      const cfg: ReplyRunParams["cfg"] = {
+        plugins: { enabled: false },
+        tools: {
+          media: {
+            models: [
+              {
+                type: "cli",
+                command: process.execPath,
+                args: [
+                  "-e",
+                  'require("node:fs").appendFileSync(process.argv[1], "call\\n"); process.stdout.write("spoken words");',
+                  callsPath,
+                ],
+                capabilities: ["audio"],
+              },
+            ],
+          },
+        },
+      };
+      const ctx: MsgContext = {
+        Body: "caption",
+        MessageSid: "source-persist",
+        media: [{ path: mediaPath, contentType: "audio/wav", workspaceDir: dir }],
+      };
+      await applyMediaUnderstanding({ ctx, cfg, workspaceDir: dir, processingMode: "audio-only" });
+      await runPrepared({
+        cfg,
+        ctx,
+        sessionCtx: { ...ctx, BodyStripped: ctx.agentText },
+        workspaceDir: dir,
+      });
+      const message = requireRunReplyAgentCall().followupRun.userTurnTranscriptRecorder?.message;
+      expect(message).toMatchObject({
+        __openclaw: { media: [{ messageId: "source-persist", transcribed: true }] },
+      });
+      if (!message) {
+        throw new Error("persisted user message unavailable");
+      }
+      const projected = await appendProviderAudioTranscripts(
+        [{ ...message, role: "user", content: ctx.agentText ?? "", timestamp: 0 }],
+        {
+          workspaceDir: dir,
+          transcribe: (fact, bytes) =>
+            transcribeProviderAudioFact({ fact, bytes, cfg, workspaceDir: dir }),
+        },
+      );
+      expect(projected[0]?.content).toBe(ctx.agentText);
+      expect(await fs.readFile(callsPath, "utf8")).toBe("call\n");
+    });
+  });
+
+  it("adopts queued audio before a retired producer settles and starts fresh transcription", async () => {
+    await withTestDir({ prefix: "openclaw-queued-transcript-" }, async (dir) => {
+      await prepareActiveQueue("collect");
+      const { primeAudioTranscript, transcribeProviderAudioFact } =
+        await import("../../media-understanding/provider-audio-transcript.js");
+      const { clearRememberedAudioTranscripts } =
+        await import("../../media-understanding/audio-delivery.js");
+      const { createSafeAudioFixtureBuffer } =
+        await import("../../media-understanding/runner.test-utils.js");
+      const exec = await import("../../process/exec.js");
+      const mediaPath = path.join(dir, "voice.wav");
+      const callsPath = path.join(dir, "calls.txt");
+      const bytes = createSafeAudioFixtureBuffer();
+      await fs.writeFile(mediaPath, bytes);
+      const cfg: ReplyRunParams["cfg"] = {
+        plugins: { enabled: false },
+        tools: {
+          media: {
+            models: [
+              {
+                type: "cli",
+                command: process.execPath,
+                args: [
+                  "-e",
+                  'require("node:fs").appendFileSync(process.argv[1], "call\\n"); process.stdout.write("current words");',
+                  callsPath,
+                ],
+                capabilities: ["audio"],
+              },
+            ],
+          },
+        },
+      };
+      const fact = {
+        path: mediaPath,
+        contentType: "audio/wav",
+        workspaceDir: dir,
+        messageId: "queued-source",
+      };
+      const scope = {
+        agentId: "main",
+        AccountId: "default",
+        SessionKey: "session-key",
+        Surface: "webchat",
+      };
+      const parent = new AbortController();
+      const entered = Promise.withResolvers<void>();
+      const retired = Promise.withResolvers<{ stdout: string; stderr: string }>();
+      const spy = vi.spyOn(exec, "runExec").mockImplementationOnce(async () => {
+        entered.resolve();
+        return await retired.promise;
+      });
+      const pending = primeAudioTranscript({
+        fact,
+        cfg,
+        ctx: { ...scope, media: [fact] },
+        agentId: scope.agentId,
+        workspaceDir: dir,
+        signal: parent.signal,
+      });
+      const outcome = pending.then(
+        () => "accepted",
+        () => "cancelled",
+      );
+      try {
+        await entered.promise;
+        await runPrepared({
+          opts: { abortSignal: parent.signal },
+          ...turn(
+            "queued voice",
+            { ...createProviderSurface("webchat"), ChatType: "direct" },
+            { MessageSid: "queued-source", media: [fact] },
+          ),
+        });
+        const call = requireRunReplyAgentCall();
+        expect(call.shouldFollowup).toBe(true);
+        parent.abort();
+        const signal = resolveFollowupAbortSignal(call.followupRun);
+        expect(signal?.aborted).not.toBe(true);
+        const params = { fact, bytes, cfg, scope, workspaceDir: dir, signal };
+        await expect(transcribeProviderAudioFact(params)).resolves.toBe("current words");
+        expect(await fs.readFile(callsPath, "utf8")).toBe("call\n");
+        retired.resolve({ stdout: "retired words", stderr: "" });
+        await expect(outcome).resolves.toBe("cancelled");
+        await expect(transcribeProviderAudioFact(params)).resolves.toBe("current words");
+        expect(await fs.readFile(callsPath, "utf8")).toBe("call\n");
+        expect(runReplyAgent).toHaveBeenCalledTimes(1);
+      } finally {
+        parent.abort();
+        retired.resolve({ stdout: "retired words", stderr: "" });
+        await outcome;
+        spy.mockRestore();
+        clearRememberedAudioTranscripts();
+      }
     });
   });
 

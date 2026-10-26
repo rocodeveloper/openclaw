@@ -54,6 +54,7 @@ import { assertSecretOwnerAvailable } from "../secrets/runtime-degraded-state.js
 import { assertRuntimeMediaRequestSecretOwnerAvailable } from "../secrets/runtime-media-secret-owner.js";
 import { createLazyRuntimeModule } from "../shared/lazy-runtime.js";
 import { MediaAttachmentCache } from "./attachments.js";
+import { assertMediaExecutionCurrent, type MediaExecutionGuards } from "./audio-delivery.js";
 import { CLI_OUTPUT_MAX_BUFFER, MIN_AUDIO_FILE_BYTES } from "./defaults.constants.js";
 import {
   normalizeImageDescriptionInput,
@@ -241,12 +242,15 @@ async function resolveCliOutput(params: {
   return params.stdout.trim();
 }
 
-async function resolveCliMediaPath(params: {
-  capability: MediaUnderstandingCapability;
-  command: string;
-  mediaPath: string;
-  outputDir: string;
-}): Promise<string> {
+async function resolveCliMediaPath(
+  params: {
+    capability: MediaUnderstandingCapability;
+    command: string;
+    mediaPath: string;
+    outputDir: string;
+  } & MediaExecutionGuards,
+): Promise<string> {
+  assertMediaExecutionCurrent(params);
   const commandId = commandBase(params.command);
   if (params.capability !== "audio" || commandId !== "whisper-cli") {
     return params.mediaPath;
@@ -259,24 +263,30 @@ async function resolveCliMediaPath(params: {
 
   const wavPath = path.join(params.outputDir, `${path.parse(params.mediaPath).name}.wav`);
   await fs.mkdir(params.outputDir, { recursive: true });
+  assertMediaExecutionCurrent(params);
   await writeExternalFileWithinRoot({
     rootDir: params.outputDir,
     path: path.basename(wavPath),
     write: async (outputPath) => {
-      await runFfmpeg([
-        "-y",
-        "-i",
-        params.mediaPath,
-        "-ac",
-        "1",
-        "-ar",
-        "16000",
-        "-c:a",
-        "pcm_s16le",
-        "-f",
-        "wav",
-        outputPath,
-      ]);
+      assertMediaExecutionCurrent(params);
+      await runFfmpeg(
+        [
+          "-y",
+          "-i",
+          params.mediaPath,
+          "-ac",
+          "1",
+          "-ar",
+          "16000",
+          "-c:a",
+          "pcm_s16le",
+          "-f",
+          "wav",
+          outputPath,
+        ],
+        { signal: params.signal },
+      );
+      assertMediaExecutionCurrent(params);
     },
   });
   return wavPath;
@@ -575,20 +585,23 @@ function formatMissingProviderHint(providerId: string): string {
   return ` Install the official external plugin with: ${formatCliCommand(catalogHint.installCommand)}, then run ${formatCliCommand("openclaw plugins registry --refresh")} and stop and start the gateway service, or run ${formatCliCommand(catalogHint.doctorFixCommand)} to repair automatically.`;
 }
 
-export async function runProviderEntry(params: {
-  capability: MediaUnderstandingCapability;
-  entry: MediaUnderstandingModelConfig;
-  cfg: OpenClawConfig;
-  attachmentIndex: number;
-  cache: MediaAttachmentCache;
-  agentId?: string;
-  agentDir?: string;
-  workspaceDir?: string;
-  providerRegistry: ProviderRegistry;
-  config?: MediaUnderstandingConfig;
-  secretOwnerId?: string;
-  request?: MediaRequestOverrides;
-}): Promise<Result<MediaUnderstandingOutput | null, unknown>> {
+export async function runProviderEntry(
+  params: MediaExecutionGuards & {
+    capability: MediaUnderstandingCapability;
+    entry: MediaUnderstandingModelConfig;
+    cfg: OpenClawConfig;
+    attachmentIndex: number;
+    cache: MediaAttachmentCache;
+    agentId?: string;
+    agentDir?: string;
+    workspaceDir?: string;
+    providerRegistry: ProviderRegistry;
+    config?: MediaUnderstandingConfig;
+    secretOwnerId?: string;
+    request?: MediaRequestOverrides;
+  },
+): Promise<Result<MediaUnderstandingOutput | null, unknown>> {
+  assertMediaExecutionCurrent(params);
   const { entry, capability, cfg } = params;
   const providerIdRaw = entry.provider?.trim();
   if (!providerIdRaw) {
@@ -689,7 +702,9 @@ export async function runProviderEntry(params: {
       attachmentIndex: params.attachmentIndex,
       maxBytes,
       timeoutMs,
+      signal: params.signal,
     });
+    assertMediaExecutionCurrent(params);
     assertMinAudioSize({ size: media.size, attachmentIndex: params.attachmentIndex });
     const audioLanguage = params.request?.language ?? entry.language ?? params.config?.language;
     // STT prompts are spelling/context hints; injected instructions can be echoed on silence.
@@ -722,8 +737,10 @@ export async function runProviderEntry(params: {
       query: providerQuery,
       timeoutMs,
       fetchFn,
+      signal: params.signal,
     };
     let result: AudioTranscriptionResult;
+    assertMediaExecutionCurrent(params);
     if (provider.transcribeAudioWithContext) {
       const attempt = await provider.transcribeAudioWithContext({
         ...input,
@@ -747,10 +764,12 @@ export async function runProviderEntry(params: {
         providerId,
         provider,
       });
-      result = await executeProviderRequest(providerId, auth, (requestAuth) =>
-        transcribeAudio({ ...input, ...requestAuth }),
-      );
+      result = await executeProviderRequest(providerId, auth, (requestAuth) => {
+        assertMediaExecutionCurrent(params);
+        return transcribeAudio({ ...input, ...requestAuth });
+      });
     }
+    assertMediaExecutionCurrent(params);
     if (isTranscriptArtifactText(result.text)) {
       return ok(null);
     }
@@ -827,8 +846,10 @@ export async function runCliEntry(
   params: Pick<
     Parameters<typeof runProviderEntry>[0],
     "capability" | "entry" | "cfg" | "cache" | "config" | "request"
-  > & { ctx: MsgContext; attachment: MediaAttachment },
+  > &
+    MediaExecutionGuards & { ctx: MsgContext; attachment: MediaAttachment },
 ): Promise<MediaUnderstandingOutput | null> {
+  assertMediaExecutionCurrent(params);
   const { entry, capability, ctx } = params;
   const attachmentIndex = params.attachment.index;
   const cli = resolveCliModelEntry(entry);
@@ -842,7 +863,9 @@ export async function runCliEntry(
     attachmentIndex,
     maxBytes,
     timeoutMs,
+    signal: params.signal,
   });
+  assertMediaExecutionCurrent(params);
   if (capability === "audio") {
     const stat = await fs.stat(attachmentPath);
     assertMinAudioSize({ size: stat.size, attachmentIndex });
@@ -856,6 +879,8 @@ export async function runCliEntry(
       command,
       mediaPath: attachmentPath,
       outputDir,
+      signal: params.signal,
+      assertCurrent: params.assertCurrent,
     });
     const outputBase = path.join(outputDir, path.parse(mediaPath).name);
 
@@ -890,13 +915,16 @@ export async function runCliEntry(
     if (shouldLogVerbose()) {
       logVerbose(`Media understanding via CLI: ${[command, ...argv].join(" ")}`);
     }
+    assertMediaExecutionCurrent(params);
     const { stdout, stderr } = await runExec(command, argv, {
+      signal: params.signal,
       timeoutMs,
       maxBuffer: CLI_OUTPUT_MAX_BUFFER,
       cwd: ["agy", "antigravity"].includes(commandBase(command))
         ? path.dirname(mediaPath)
         : undefined,
     });
+    assertMediaExecutionCurrent(params);
     const requestedBackend =
       capability === "audio"
         ? resolveRequestedLocalAudioBackend({
@@ -918,6 +946,7 @@ export async function runCliEntry(
       stdout,
       mediaPath,
     });
+    assertMediaExecutionCurrent(params);
     const text = trimOutput(resolved, maxChars);
     if (!text || (capability === "audio" && isTranscriptArtifactText(resolved))) {
       return null;

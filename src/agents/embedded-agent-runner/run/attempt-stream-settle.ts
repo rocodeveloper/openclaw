@@ -477,8 +477,6 @@ export async function prepareEmbeddedAttemptTransport(input: {
       agentId: input.sessionAgentId,
       AccountId: attempt.agentAccountId,
       SessionKey: attempt.sessionKey,
-      MessageSid:
-        attempt.currentMessageId === undefined ? undefined : String(attempt.currentMessageId),
       Surface: attempt.messageChannel,
       Provider: attempt.messageProvider,
       ChatType: attempt.chatType,
@@ -533,11 +531,10 @@ export async function prepareEmbeddedAttemptTransport(input: {
     !providerStreamFn && nativeAudio !== undefined && attempt.model.api === "google-generative-ai";
   session.agent.streamFn =
     audioDelivery.kind === "provider-transcript"
-      ? wrapStreamFnWithProviderAudioTranscripts(
-          streamFn,
-          audioDelivery.transcribe,
-          providerMediaOptions,
-        )
+      ? wrapStreamFnWithProviderAudioTranscripts(streamFn, audioDelivery.transcribe, {
+          ...providerMediaOptions,
+          attachments: audioDelivery.attachments,
+        })
       : needsDefaultNativeAudioMedia
         ? wrapWithProviderMedia(streamFn, false)
         : streamFn;

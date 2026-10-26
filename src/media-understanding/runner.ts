@@ -39,6 +39,11 @@ import { classifyMediaReferenceSource } from "../media/media-reference.js";
 import { createLazyRuntimeModule, createLazyRuntimeNamedExport } from "../shared/lazy-runtime.js";
 import { MediaAttachmentCache, selectAttachments } from "./attachments.js";
 import {
+  assertMediaExecutionCurrent,
+  type MediaExecutionGuards,
+  type ScheduleAudioPrime,
+} from "./audio-delivery.js";
+import {
   matchesMediaEntryCapability,
   resolveConfiguredMediaEntryCapabilities,
 } from "./entry-capabilities.js";
@@ -567,6 +572,7 @@ async function runAttachmentEntries(
   const attempts: MediaUnderstandingModelDecision[] = [];
   let processing: MediaAttachmentProcessing = "omitted";
   for await (const candidate of entries) {
+    assertMediaExecutionCurrent(params);
     const { entry } = candidate;
     const entryType = entry.type ?? (entry.command ? "cli" : "provider");
     try {
@@ -579,6 +585,7 @@ async function runAttachmentEntries(
               attachmentIndex,
               secretOwnerId: candidate.secretOwnerId,
             });
+      assertMediaExecutionCurrent(params);
       if (!attempt.ok) {
         if (
           !(params.automaticAudio && isProviderAuthError(attempt.error, "missing-provider-auth"))
@@ -616,6 +623,7 @@ async function runAttachmentEntries(
         buildModelDecision({ entry, entryType, outcome: "skipped", reason: "empty output" }),
       );
     } catch (err) {
+      assertMediaExecutionCurrent(params);
       if (isMediaUnderstandingSkipError(err)) {
         attempts.push(
           buildModelDecision({
@@ -663,20 +671,24 @@ function createAttachmentDispositions(
   return Object.fromEntries(indexes.map((index) => [index, disposition]));
 }
 
-export async function runCapability(params: {
-  capability: MediaUnderstandingCapability;
-  cfg: OpenClawConfig;
-  ctx: MsgContext;
-  attachments: MediaAttachmentCache;
-  media: MediaAttachment[];
-  agentId?: string;
-  agentDir?: string;
-  workspaceDir?: string;
-  providerRegistry: LazyProviderRegistry;
-  config?: MediaUnderstandingConfig;
-  activeModel?: ActiveMediaModel;
-  request?: MediaRequestOverrides;
-}): Promise<RunCapabilityResult> {
+export async function runCapability(
+  params: MediaExecutionGuards & {
+    scheduleAudioPrime?: ScheduleAudioPrime;
+    capability: MediaUnderstandingCapability;
+    cfg: OpenClawConfig;
+    ctx: MsgContext;
+    attachments: MediaAttachmentCache;
+    media: MediaAttachment[];
+    agentId?: string;
+    agentDir?: string;
+    workspaceDir?: string;
+    providerRegistry: LazyProviderRegistry;
+    config?: MediaUnderstandingConfig;
+    activeModel?: ActiveMediaModel;
+    request?: MediaRequestOverrides;
+  },
+): Promise<RunCapabilityResult> {
+  assertMediaExecutionCurrent(params);
   const { capability, cfg, ctx } = params;
   const config: MediaUnderstandingConfig = params.config ?? cfg.tools?.media?.[capability] ?? {};
   const selection = selectAttachments({
@@ -684,6 +696,9 @@ export async function runCapability(params: {
     attachments: params.media,
     policy: config.attachments,
   });
+  let executableAttachments = selection.selected;
+  const nativeAudioDispositions: Record<number, MediaAttachmentDisposition> = {};
+  const nativeAudioDecisions: MediaUnderstandingDecision["attachments"] = [];
   const selectedAttachmentIndexes = selection.selected.map((attachment) => attachment.index);
   const attachmentProcessing: Record<number, MediaAttachmentProcessing> = Object.fromEntries(
     [...selectedAttachmentIndexes, ...selection.droppedAttachmentIndexes].map((index) => [
@@ -714,6 +729,7 @@ export async function runCapability(params: {
   ) => ({
     ...createAttachmentDispositions(selectedAttachmentIndexes, selectedDisposition),
     ...createAttachmentDispositions(selection.droppedAttachmentIndexes, droppedDisposition),
+    ...nativeAudioDispositions,
   });
   const rendersMarker = (dispositions: Record<number, MediaAttachmentDisposition>) =>
     Object.values(dispositions).some(
@@ -757,7 +773,11 @@ export async function runCapability(params: {
   if (selection.selected.length === 0) {
     return {
       outputs: [],
-      decision: await buildDecision("no-attachment", [], {}),
+      decision: await buildDecision(
+        "no-attachment",
+        [],
+        buildDispositions({ kind: "not-selected" }),
+      ),
     };
   }
 
@@ -780,37 +800,50 @@ export async function runCapability(params: {
   }
 
   if (capability === "audio" && activeProvider) {
-    const audioPlan = await (
-      await loadResolvePreTurnAudioPlan()
-    )({
+    const resolvePreTurnAudioPlan = await loadResolvePreTurnAudioPlan();
+    assertMediaExecutionCurrent(params);
+    const audioPlan = await resolvePreTurnAudioPlan({
       cfg,
       ...(params.agentId ? { agentId: params.agentId } : {}),
       ...(params.agentDir ? { agentDir: params.agentDir } : {}),
       ...(params.workspaceDir ? { workspaceDir: params.workspaceDir } : {}),
       activeModel: params.activeModel,
-    }).catch(() => "transcribe" as const);
+    }).catch(() => {
+      assertMediaExecutionCurrent(params);
+      return "transcribe" as const;
+    });
+    assertMediaExecutionCurrent(params);
     if (audioPlan !== "transcribe") {
       if (shouldLogVerbose()) {
         logVerbose(
           `Deferring audio transcription: primary model takes native audio (${audioPlan})`,
         );
       }
-      if (audioPlan === "prime") {
+      const nativeAttachments = selection.selected.filter(
+        (item) => item.path || (item.url && classifyMediaReferenceSource(item.url).isMediaStoreUrl),
+      );
+      const nativeIndexes = new Set(nativeAttachments.map((item) => item.index));
+      executableAttachments = selection.selected.filter((item) => !nativeIndexes.has(item.index));
+      if (audioPlan === "prime" && params.scheduleAudioPrime) {
         const primeAudioTranscript = await loadPrimeAudioTranscript();
-        for (const item of selection.selected) {
+        for (const item of nativeAttachments) {
+          assertMediaExecutionCurrent(params);
           const fact = ctx.media?.[item.index];
           if (
             fact &&
             (item.path || (item.url && classifyMediaReferenceSource(item.url).isMediaStoreUrl))
           ) {
-            void primeAudioTranscript({
-              fact,
-              ctx,
-              cfg,
-              agentId: params.agentId,
-              agentDir: params.agentDir,
-              workspaceDir: params.workspaceDir,
-            }).catch(() => undefined);
+            params.scheduleAudioPrime?.((guards) =>
+              primeAudioTranscript({
+                ...guards,
+                fact,
+                ctx,
+                cfg,
+                agentId: params.agentId,
+                agentDir: params.agentDir,
+                workspaceDir: params.workspaceDir,
+              }),
+            );
           }
         }
       }
@@ -821,30 +854,24 @@ export async function runCapability(params: {
         outcome: "skipped" as const,
         reason: "primary model takes audio natively",
       };
-      const dispositions = buildDispositions(
-        { kind: "handed-to-native-audio" },
-        { kind: "not-selected" },
-      );
-      for (const item of selection.selected) {
-        if (!item.path && !(item.url && classifyMediaReferenceSource(item.url).isMediaStoreUrl)) {
-          dispositions[item.index] = {
-            kind: "failed",
-            reason: "remote-url audio is not natively deliverable",
-          };
-        }
+      for (const item of nativeAttachments) {
+        nativeAudioDispositions[item.index] = { kind: "handed-to-native-audio" };
+        nativeAudioDecisions.push({
+          attachmentIndex: item.index,
+          attempts: [attempt],
+          chosen: attempt,
+        });
       }
-      return {
-        outputs: [],
-        decision: await buildDecision(
-          "skipped",
-          selection.selected.map((item) => ({
-            attachmentIndex: item.index,
-            attempts: [attempt],
-            chosen: attempt,
-          })),
-          dispositions,
-        ),
-      };
+      if (executableAttachments.length === 0) {
+        return {
+          outputs: [],
+          decision: await buildDecision(
+            "skipped",
+            nativeAudioDecisions,
+            buildDispositions({ kind: "handed-to-native-audio" }, { kind: "not-selected" }),
+          ),
+        };
+      }
     }
   }
 
@@ -901,6 +928,7 @@ export async function runCapability(params: {
   // Every path past the native-vision skip branch reads the registry: resolve
   // it once here (apply.ts's memoized factory builds it at most once per turn)
   // and reuse the concrete value for every remaining call below.
+  assertMediaExecutionCurrent(params);
   const providerRegistry = resolveProviderRegistry(params.providerRegistry);
   const entries = resolveModelEntries({
     cfg,
@@ -931,10 +959,11 @@ export async function runCapability(params: {
     };
   }
 
+  assertMediaExecutionCurrent(params);
   const outputs: MediaUnderstandingOutput[] = [];
-  const attachmentDecisions: MediaUnderstandingDecision["attachments"] = [];
+  const attachmentDecisions: MediaUnderstandingDecision["attachments"] = [...nativeAudioDecisions];
   const attachmentDispositions = buildDispositions({ kind: "failed" }, { kind: "not-selected" });
-  for (const attachment of selection.selected) {
+  for (const attachment of executableAttachments) {
     const { output, attempts, processing } = await runAttachmentEntries({
       ...params,
       attachment,

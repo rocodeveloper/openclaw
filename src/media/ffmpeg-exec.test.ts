@@ -16,11 +16,12 @@ vi.mock("../infra/resolve-system-bin.js", () => ({
 
 let parseFfprobeCodecAndSampleRate: typeof import("./ffmpeg-exec.js").parseFfprobeCodecAndSampleRate;
 let resolveFfmpegBin: typeof import("./ffmpeg-exec.js").resolveFfmpegBin;
+let runFfmpeg: typeof import("./ffmpeg-exec.js").runFfmpeg;
 let runFfprobe: typeof import("./ffmpeg-exec.js").runFfprobe;
 
 beforeAll(async () => {
   vi.resetModules();
-  ({ parseFfprobeCodecAndSampleRate, resolveFfmpegBin, runFfprobe } =
+  ({ parseFfprobeCodecAndSampleRate, resolveFfmpegBin, runFfprobe, runFfmpeg } =
     await import("./ffmpeg-exec.js"));
 });
 
@@ -141,5 +142,17 @@ describe("resolveFfmpegBin", () => {
 
     expect(resolveFfmpegBin()).toBe("/usr/bin/ffmpeg");
     expect(resolveSystemBinMock).toHaveBeenCalledWith("ffmpeg", { trust: "standard" });
+  });
+});
+
+it("cancels audio conversion with its caller signal", async () => {
+  const controller = new AbortController();
+  controller.abort();
+  runExecMock.mockImplementation(async (_command, _args, options) => {
+    options.signal?.throwIfAborted();
+    return { stdout: "converted", stderr: "" };
+  });
+  await expect(runFfmpeg(["-version"], { signal: controller.signal })).rejects.toMatchObject({
+    name: "AbortError",
   });
 });

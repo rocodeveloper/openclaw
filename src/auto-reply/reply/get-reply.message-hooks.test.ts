@@ -546,6 +546,26 @@ describe("getReplyFromConfig message hooks", () => {
     expect(mocks.applyMediaUnderstanding).not.toHaveBeenCalled();
   });
 
+  it("completes the reply while retiring unresolved transcript priming", async () => {
+    const prime = createDeferred<void>();
+    let primeSignal: AbortSignal | undefined;
+    mocks.applyMediaUnderstanding.mockImplementationOnce(async ({ scheduleAudioPrime }) => {
+      scheduleAudioPrime?.(async ({ signal }) => {
+        primeSignal = signal;
+        await prime.promise;
+        signal?.throwIfAborted();
+      });
+      return { extractedFileImages: [] };
+    });
+    try {
+      const reply = await getReplyFromConfig(buildCtx(), undefined, withFastReplyConfig({}));
+      expect(reply).toEqual({ text: "ok" });
+      expect(primeSignal?.aborted).toBe(true);
+    } finally {
+      prime.resolve();
+    }
+  });
+
   it("continues dispatching when media understanding fails before reply routing", async () => {
     mocks.applyMediaUnderstanding.mockRejectedValueOnce(
       new Error("Cannot find module '/tmp/openclaw/dist/media-understanding/apply.runtime-old.js'"),

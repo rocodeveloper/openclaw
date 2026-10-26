@@ -16,7 +16,11 @@ type AudioTranscriptOptions = Omit<
 export type AttemptAudioDelivery =
   | { kind: "transcript-only" }
   | { kind: "native"; audio: ProviderAudioDelivery }
-  | { kind: "provider-transcript"; transcribe: ProviderAudioDelivery["transcribe"] };
+  | {
+      kind: "provider-transcript";
+      transcribe: ProviderAudioDelivery["transcribe"];
+      attachments?: ProviderAudioDelivery["attachments"];
+    };
 
 export function resolveAttemptAudioDelivery(params: {
   cfg: OpenClawConfig | undefined;
@@ -46,8 +50,19 @@ export function resolveAttemptAudioDelivery(params: {
     });
   };
   return deliversNativeAudio(mode, params.modelInput)
-    ? { kind: "native", audio: { native: true, transcribe } }
-    : { kind: "provider-transcript", transcribe };
+    ? {
+        kind: "native",
+        audio: {
+          native: true,
+          transcribe,
+          attachments: params.cfg?.tools?.media?.audio?.attachments,
+        },
+      }
+    : {
+        kind: "provider-transcript",
+        transcribe,
+        attachments: params.cfg?.tools?.media?.audio?.attachments,
+      };
 }
 
 export function wrapStreamFnWithProviderAudioTranscripts(

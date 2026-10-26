@@ -1,4 +1,10 @@
-import { trySafeFileURLToPath } from "@openclaw/fs-safe/advanced";
+import path from "node:path";
+import {
+  assertNoWindowsNetworkPath,
+  safeFileURLToPath,
+  trySafeFileURLToPath,
+} from "@openclaw/fs-safe/advanced";
+import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
 import {
   isImageMediaFact,
   normalizeMediaFacts,
@@ -89,4 +95,95 @@ export function hasHydratableMediaImages(media?: readonly MediaFact[]): boolean 
   return normalizeMediaFacts(media)
     .map(mediaFactToImageRef)
     .some((ref) => ref?.hydrate === true);
+}
+
+const IMAGE_EXTENSION_PATTERN = "png|jpg|jpeg|gif|webp|bmp|tiff|tif|heic|heif";
+const FILE_URL_REGEX_SOURCE = "file://[^\\s<>\"'`\\]]+\\.(?:" + IMAGE_EXTENSION_PATTERN + ")";
+const WINDOWS_DRIVE_PATH_REGEX_SOURCE =
+  "(?:^|\\s|[\"'`(])([A-Za-z]:[\\\\/][^\\s\"'`()\\[\\]]*\\.(?:" + IMAGE_EXTENSION_PATTERN + "))";
+const PATH_REGEX_SOURCE =
+  "(?:^|\\s|[\"'`(])((\\.\\.?/|[~/])[^\\s\"'`()\\[\\]]*\\.(?:" + IMAGE_EXTENSION_PATTERN + "))";
+const FILE_URL_PATTERN = new RegExp(FILE_URL_REGEX_SOURCE, "gi");
+const PROMPT_WINDOWS_DRIVE_PATH_PATTERN = new RegExp(WINDOWS_DRIVE_PATH_REGEX_SOURCE, "gi");
+const PATH_PATTERN = new RegExp(PATH_REGEX_SOURCE, "gi");
+const LEGACY_ATTACHMENT_MARKER_PATTERN =
+  /\[(?:media attached(?:\s+\d+\/\d+)?:|Image:\s*source:)\s*[^\]]+\]/gi;
+
+function normalizeRefForDedupe(raw: string): string {
+  const projected =
+    process.platform === "darwin" && raw.startsWith("/private/var/")
+      ? raw.slice("/private".length)
+      : raw;
+  return process.platform === "win32" ? normalizeLowercaseStringOrEmpty(projected) : projected;
+}
+
+/** Detects explicit local image paths and file URLs in user prompt text. */
+export function detectImageReferences(prompt: string): MediaFileRef[] {
+  const refs: MediaFileRef[] = [];
+  const seen = new Set<string>();
+  const pathPrompt = prompt.replace(LEGACY_ATTACHMENT_MARKER_PATTERN, (marker) =>
+    " ".repeat(marker.length),
+  );
+
+  const addPathRef = (raw: string, fileUrl: boolean) => {
+    const trimmed = raw.trim();
+    const dedupeKey = normalizeRefForDedupe(trimmed);
+    if (!trimmed || seen.has(dedupeKey)) {
+      return;
+    }
+    // An extension-only basename is a dotfile even though the regex accepts it.
+    if (!fileUrl && !path.extname(trimmed)) {
+      return;
+    }
+    let resolved = trimmed;
+    try {
+      if (fileUrl) {
+        resolved = safeFileURLToPath(trimmed);
+      } else {
+        assertNoWindowsNetworkPath(trimmed, "Image path");
+      }
+    } catch {
+      return;
+    }
+    if (!fileUrl && trimmed.startsWith("~")) {
+      resolved = resolveUserPath(trimmed);
+    }
+    if (isOpenClawCliImageCachePath(resolved)) {
+      return;
+    }
+    seen.add(dedupeKey);
+    refs.push({ raw: trimmed, type: "path", resolved });
+  };
+
+  for (const [pattern, group, fileUrl] of [
+    [FILE_URL_PATTERN, 0, true],
+    [PROMPT_WINDOWS_DRIVE_PATH_PATTERN, 1, false],
+    [PATH_PATTERN, 1, false],
+  ] as const) {
+    pattern.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = pattern.exec(pathPrompt)) !== null) {
+      if (match[group]) {
+        addPathRef(match[group], fileUrl);
+      }
+    }
+  }
+
+  return refs;
+}
+
+export function refDedupeKey(ref: MediaFileRef, workspaceDir?: string): string {
+  const resolved =
+    ref.type === "path" && workspaceDir && !path.isAbsolute(ref.resolved)
+      ? path.resolve(workspaceDir, ref.resolved)
+      : ref.resolved;
+  return `${ref.type}\0${normalizeRefForDedupe(resolved)}`;
+}
+
+export function rawAliasDedupeKey(alias: string): string | undefined {
+  return path.isAbsolute(alias) ||
+    /^[A-Za-z]:[\\/]/.test(alias) ||
+    /^[a-z][a-z0-9+.-]*:/i.test(alias)
+    ? normalizeRefForDedupe(alias)
+    : undefined;
 }

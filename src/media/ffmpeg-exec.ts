@@ -9,6 +9,7 @@ import {
 
 /** Process limits and optional stdin payload for ffmpeg/ffprobe helper calls. */
 type MediaExecOptions = {
+  signal?: AbortSignal;
   timeoutMs?: number;
   maxBufferBytes?: number;
   input?: Buffer | string;
@@ -24,6 +25,7 @@ function resolveExecOptions(
   }
   return {
     input: options?.input,
+    ...(options?.signal ? { signal: options.signal } : {}),
     ...(options?.stdinFileDescriptor !== undefined
       ? { stdinFileDescriptor: options.stdinFileDescriptor }
       : {}),

@@ -1,16 +1,19 @@
 import path from "node:path";
-import { assertNoWindowsNetworkPath, safeFileURLToPath } from "@openclaw/fs-safe/advanced";
 import { MAX_AUDIO_BYTES, MAX_VIDEO_BYTES } from "@openclaw/media-core/constants";
 import { normalizeMimeType } from "@openclaw/media-core/mime";
 import { asNonArrayRecord } from "@openclaw/normalization-core/record-coerce";
-import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
 import type {
   ModelInputContent,
   ProviderContext,
 } from "../../../../packages/ai/src/provider-types.js";
+import type { MediaUnderstandingAttachmentsConfig } from "../../../config/types.tools.js";
 import { formatErrorMessage } from "../../../infra/errors.js";
 import type { Context, ImageContent, TextContent } from "../../../llm/types.js";
 import { redactSensitiveText } from "../../../logging/redact.js";
+import {
+  normalizeAttachments,
+  selectAttachments,
+} from "../../../media-understanding/attachments.js";
 import {
   attachRuntimePromptMediaFacts,
   isImageMediaFact,
@@ -28,7 +31,6 @@ import { finalizeRuntimePromptImages } from "../../../media/runtime-prompt-image
 import { getMediaDir } from "../../../media/store.js";
 import { loadWebMedia, type WebMediaResult } from "../../../media/web-media.js";
 import type { UserTurnTranscriptRecorder } from "../../../sessions/user-turn-transcript.types.js";
-import { resolveUserPath } from "../../../utils.js";
 import type { AgentMessage } from "../../runtime/index.js";
 import {
   createSandboxBridgeReadFile,
@@ -40,7 +42,9 @@ import { getAgentWorkspaceAccess } from "../../workspace-access.js";
 import { log } from "../logger.js";
 import {
   mediaFactToImageRef,
-  isOpenClawCliImageCachePath,
+  detectImageReferences,
+  refDedupeKey,
+  rawAliasDedupeKey,
   resolveMediaFactLocalRef,
   type MediaFileRef,
   type MediaImageRef,
@@ -52,103 +56,12 @@ import {
   readPersistedMediaImageLayout,
 } from "./prompt-image-metadata.js";
 
-export { hasHydratableMediaImages } from "./images.media-refs.js";
-
-const IMAGE_EXTENSION_PATTERN = "png|jpg|jpeg|gif|webp|bmp|tiff|tif|heic|heif";
-const FILE_URL_REGEX_SOURCE = "file://[^\\s<>\"'`\\]]+\\.(?:" + IMAGE_EXTENSION_PATTERN + ")";
-const WINDOWS_DRIVE_PATH_REGEX_SOURCE =
-  "(?:^|\\s|[\"'`(])([A-Za-z]:[\\\\/][^\\s\"'`()\\[\\]]*\\.(?:" + IMAGE_EXTENSION_PATTERN + "))";
-const PATH_REGEX_SOURCE =
-  "(?:^|\\s|[\"'`(])((\\.\\.?/|[~/])[^\\s\"'`()\\[\\]]*\\.(?:" + IMAGE_EXTENSION_PATTERN + "))";
-const FILE_URL_PATTERN = new RegExp(FILE_URL_REGEX_SOURCE, "gi");
-const WINDOWS_DRIVE_PATH_PATTERN = new RegExp(WINDOWS_DRIVE_PATH_REGEX_SOURCE, "gi");
-const PATH_PATTERN = new RegExp(PATH_REGEX_SOURCE, "gi");
-const LEGACY_ATTACHMENT_MARKER_PATTERN =
-  /\[(?:media attached(?:\s+\d+\/\d+)?:|Image:\s*source:)\s*[^\]]+\]/gi;
-
-function normalizeRefForDedupe(raw: string): string {
-  const projected =
-    process.platform === "darwin" && raw.startsWith("/private/var/")
-      ? raw.slice("/private".length)
-      : raw;
-  return process.platform === "win32" ? normalizeLowercaseStringOrEmpty(projected) : projected;
-}
+export { detectImageReferences, hasHydratableMediaImages } from "./images.media-refs.js";
 
 type PromptImageEntry = {
   image: ImageContent;
   factIndex: ImageFactIndex;
 };
-
-/** Detects explicit local image paths and file URLs in user prompt text. */
-export function detectImageReferences(prompt: string): MediaFileRef[] {
-  const refs: MediaFileRef[] = [];
-  const seen = new Set<string>();
-  const pathPrompt = prompt.replace(LEGACY_ATTACHMENT_MARKER_PATTERN, (marker) =>
-    " ".repeat(marker.length),
-  );
-
-  const addPathRef = (raw: string, fileUrl: boolean) => {
-    const trimmed = raw.trim();
-    const dedupeKey = normalizeRefForDedupe(trimmed);
-    if (!trimmed || seen.has(dedupeKey)) {
-      return;
-    }
-    // An extension-only basename is a dotfile even though the regex accepts it.
-    if (!fileUrl && !path.extname(trimmed)) {
-      return;
-    }
-    let resolved = trimmed;
-    try {
-      if (fileUrl) {
-        resolved = safeFileURLToPath(trimmed);
-      } else {
-        assertNoWindowsNetworkPath(trimmed, "Image path");
-      }
-    } catch {
-      return;
-    }
-    if (!fileUrl && trimmed.startsWith("~")) {
-      resolved = resolveUserPath(trimmed);
-    }
-    if (isOpenClawCliImageCachePath(resolved)) {
-      return;
-    }
-    seen.add(dedupeKey);
-    refs.push({ raw: trimmed, type: "path", resolved });
-  };
-
-  for (const [pattern, group, fileUrl] of [
-    [FILE_URL_PATTERN, 0, true],
-    [WINDOWS_DRIVE_PATH_PATTERN, 1, false],
-    [PATH_PATTERN, 1, false],
-  ] as const) {
-    pattern.lastIndex = 0;
-    let match: RegExpExecArray | null;
-    while ((match = pattern.exec(pathPrompt)) !== null) {
-      if (match[group]) {
-        addPathRef(match[group], fileUrl);
-      }
-    }
-  }
-
-  return refs;
-}
-
-function refDedupeKey(ref: MediaFileRef, workspaceDir?: string): string {
-  const resolved =
-    ref.type === "path" && workspaceDir && !path.isAbsolute(ref.resolved)
-      ? path.resolve(workspaceDir, ref.resolved)
-      : ref.resolved;
-  return `${ref.type}\0${normalizeRefForDedupe(resolved)}`;
-}
-
-function rawAliasDedupeKey(alias: string): string | undefined {
-  return path.isAbsolute(alias) ||
-    /^[A-Za-z]:[\\/]/.test(alias) ||
-    /^[a-z][a-z0-9+.-]*:/i.test(alias)
-    ? normalizeRefForDedupe(alias)
-    : undefined;
-}
 
 async function loadMediaFromRef(
   ref: MediaFileRef & { workspaceDir?: string },
@@ -445,6 +358,7 @@ type PromptMediaOptions = {
 
 export type ProviderAudioDelivery = {
   native: boolean;
+  attachments?: MediaUnderstandingAttachmentsConfig;
   transcribe: (fact: MediaFact, bytes: Buffer) => Promise<string | undefined>;
 };
 
@@ -519,6 +433,7 @@ async function materializeAudioFact(
     | "assertCurrent"
   >,
   audio: ProviderAudioDelivery,
+  transcriptionEligible: boolean,
 ): Promise<ModelInputContent> {
   options.signal?.throwIfAborted();
   options.assertCurrent?.();
@@ -548,6 +463,9 @@ async function materializeAudioFact(
     return { type: "text", text: AUDIO_OMISSION.invalid };
   }
   if (!audio.native) {
+    if (!transcriptionEligible) {
+      return { type: "text", text: AUDIO_OMISSION.untranscribed };
+    }
     const transcript = await audio.transcribe(fact, loaded.buffer);
     options.signal?.throwIfAborted();
     options.assertCurrent?.();
@@ -597,6 +515,13 @@ async function projectOrderedPromptMedia(params: {
       imagesByFact.set(factIndex, [...(imagesByFact.get(factIndex) ?? []), image]);
     }
   });
+  const selectedAudioIndexes = new Set(
+    selectAttachments({
+      capability: "audio",
+      attachments: normalizeAttachments({ media: params.media }),
+      policy: audio?.attachments,
+    }).selected.map((attachment) => attachment.index),
+  );
   for (const [factIndex, fact] of params.media.entries()) {
     if (isImageMediaFact(fact)) {
       projected.push(...(imagesByFact.get(factIndex) ?? []));
@@ -607,7 +532,15 @@ async function projectOrderedPromptMedia(params: {
           : { type: "text", text: VIDEO_OMISSION.unsupported },
       );
     } else if (audio && isPendingAudioMediaFact(fact)) {
-      projected.push(await materializeAudioFact(fact, params.audioBudget, params.options, audio));
+      projected.push(
+        await materializeAudioFact(
+          fact,
+          params.audioBudget,
+          params.options,
+          audio,
+          selectedAudioIndexes.has(factIndex),
+        ),
+      );
     }
   }
   projected.push(...factlessImages);
@@ -711,6 +644,7 @@ export async function appendProviderAudioTranscripts(
     "provider" | "model" | "maxBytes" | "maxDimensionPx" | "audio"
   > & {
     transcribe: ProviderAudioDelivery["transcribe"];
+    attachments?: MediaUnderstandingAttachmentsConfig;
   },
 ): Promise<AgentMessage[]> {
   let transcribed: AgentMessage[] | undefined;
@@ -720,15 +654,21 @@ export async function appendProviderAudioTranscripts(
       continue;
     }
     const runtimeMedia = readRuntimePromptMediaFacts(message);
-    const pendingAudio = (runtimeMedia ?? readPersistedMediaFacts(message) ?? []).filter(
-      isPendingAudioMediaFact,
+    const media = runtimeMedia ?? readPersistedMediaFacts(message) ?? [];
+    const selected = selectAttachments({
+      capability: "audio",
+      attachments: normalizeAttachments({ media }),
+      policy: options.attachments,
+    });
+    const pendingAudio = selected.selected.flatMap(({ index: attachmentIndex }) =>
+      media[attachmentIndex] ? [media[attachmentIndex]] : [],
     );
     if (pendingAudio.length === 0) {
       continue;
     }
     const transcripts: TextContent[] = [];
     for (const fact of pendingAudio) {
-      const block = await materializeAudioFact(fact, { remaining: 0 }, options, audio);
+      const block = await materializeAudioFact(fact, { remaining: 0 }, options, audio, true);
       if (block.type === "text") {
         transcripts.push(block);
       }

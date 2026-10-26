@@ -78,4 +78,25 @@ describe("audio delivery", () => {
     await transcribeAudioOnce(audioTranscriptKey(Buffer.from("empty"), scope), empty);
     expect(empty).toHaveBeenCalledTimes(1);
   });
+  it("retires a cancelled producer before settlement and lets a successor transcribe", async () => {
+    const controller = new AbortController();
+    const retired = Promise.withResolvers<string>();
+    const oldResult = transcribeAudioOnce("adopted-voice", () => retired.promise, {
+      signal: controller.signal,
+    });
+    const oldOutcome = oldResult.then(
+      () => "accepted",
+      () => "cancelled",
+    );
+    controller.abort();
+    const successor = vi.fn(async () => "successor words");
+    const successorResult = transcribeAudioOnce("adopted-voice", successor);
+    await Promise.resolve();
+    expect(successor).toHaveBeenCalledTimes(1);
+    await expect(oldOutcome).resolves.toBe("cancelled");
+    await expect(successorResult).resolves.toBe("successor words");
+    retired.resolve("retired words");
+    await retired.promise;
+    await expect(transcribeAudioOnce("adopted-voice", successor)).resolves.toBe("successor words");
+  });
 });

@@ -118,18 +118,28 @@ process.stdout.write(process.argv[3] === "empty" && name === "first.wav" ? "  \\
           processingMode: "audio-only",
         });
 
+        const selectedLast = attachments?.prefer === "last";
         expect(await fs.readFile(callsPath, "utf8")).toBe(
-          emptyFirst ? "first.wav\nfirst.wav\nsecond.wav\n" : "first.wav\nsecond.wav\n",
+          selectedLast
+            ? "first.wav\nsecond.wav\n"
+            : emptyFirst
+              ? "first.wav\nfirst.wav\n"
+              : "first.wav\n",
         );
-        expect(ctx.MediaUnderstanding).toEqual([
-          expect.objectContaining({
-            kind: "audio.transcription",
-            attachmentIndex: 3,
-            text: "heard second.wav",
-          }),
-        ]);
-        expect(ctx.Body).toContain("heard second.wav");
-        expect(ctx.agentText).toContain("heard second.wav");
+        if (selectedLast) {
+          expect(ctx.MediaUnderstanding).toEqual([
+            expect.objectContaining({
+              kind: "audio.transcription",
+              attachmentIndex: 3,
+              text: "heard second.wav",
+            }),
+          ]);
+          expect(ctx.Body).toContain("heard second.wav");
+          expect(ctx.agentText).toContain("heard second.wav");
+        } else {
+          expect(ctx.MediaUnderstanding).toBeUndefined();
+          expect(ctx.media?.[3]?.transcribed).toBe(false);
+        }
         expect(ctx.BodyForAgent).toBe(ctx.agentText);
         expect(ctx.agentText).not.toContain("stale alias");
         expect(ctx).toMatchObject({
