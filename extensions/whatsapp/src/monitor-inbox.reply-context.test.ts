@@ -29,11 +29,22 @@ vi.mock("openclaw/plugin-sdk/logging-core", async (importOriginal) => {
 describe("web monitor inbox reply context", () => {
   installStreamsInboundMessageHooks();
 
-  it("redacts opaque Wiki credentials in raw and quoted logs while preserving command input", async () => {
+  it.each([
+    ["/wiki ", "opaqueProvisioningValue"],
+    ["/wiki ", '"quoted opaque value"'],
+    ["/wiki: ", "opaqueProvisioningValue"],
+    ["/wiki:", "opaqueProvisioningValue"],
+    ["/wiki \t: ", "opaqueProvisioningValue"],
+    ["/wiki\u00a0", "opaqueProvisioningValue"],
+    ["/wiki\u2003", "opaqueProvisioningValue"],
+    ["/ wiki\t", "opaqueProvisioningValue"],
+    ["/WIKI ", "opaque`Provisioning`Value"],
+    ["/wiki ", "`opaque\"Provisioning'Value`"],
+  ])("redacts Wiki credentials after %s while preserving command input", async (prefix, token) => {
     const onMessage = vi.fn(async () => undefined);
     const { listener, sock } = await startInboxMonitor(onMessage as InboxOnMessage);
-    const body = "@123 /wiki opaqueProvisioningValue";
-    const quote = '/wiki "quoted opaque value"';
+    const body = `@123 ${prefix}${token}`;
+    const quote = `${prefix}${token}`;
     inboundLogCapture.mockClear();
     try {
       sock.ev.emit("messages.upsert", {
@@ -59,8 +70,8 @@ describe("web monitor inbox reply context", () => {
       await vi.waitFor(() => expect(inboundLogCapture).toHaveBeenCalled(), { timeout: 15_000 });
       expect(inboundLogCapture).toHaveBeenCalledWith(
         expect.objectContaining({
-          body: "@123 /wiki ***",
-          replyToBody: "/wiki ***",
+          body: `@123 ${prefix}***`,
+          replyToBody: `${prefix}***`,
         }),
         "inbound message",
       );
@@ -68,8 +79,7 @@ describe("web monitor inbox reply context", () => {
       const inbound = inboundMessage(onMessage);
       expect(inbound.payload.body).toBe(body);
       expect(inbound.quote?.body).toBe(quote);
-      expect(JSON.stringify(inboundLogCapture.mock.calls)).not.toContain("opaqueProvisioningValue");
-      expect(JSON.stringify(inboundLogCapture.mock.calls)).not.toContain("quoted opaque value");
+      expect(JSON.stringify(inboundLogCapture.mock.calls)).not.toContain(token);
     } finally {
       await listener.close();
     }

@@ -316,6 +316,27 @@ describe("model-visible tool payload redaction", () => {
 });
 
 describe("redactSensitiveText", () => {
+  it.each([
+    ["/wiki opaqueProvisioningValue", "/wiki ***"],
+    ['/wiki "quoted opaque value"', "/wiki ***"],
+    ["/wiki 'quoted opaque value'", "/wiki ***"],
+    ["/wiki:opaqueProvisioningValue", "/wiki:***"],
+    ["/wiki: opaqueProvisioningValue", "/wiki: ***"],
+    ["/wiki \t: opaqueProvisioningValue", "/wiki \t: ***"],
+    ["/wiki\u00a0opaqueProvisioningValue", "/wiki\u00a0***"],
+    ["/wiki\u2003opaqueProvisioningValue", "/wiki\u2003***"],
+    ["/ wiki\topaqueProvisioningValue", "/ wiki\t***"],
+    ["/wiki\nopaqueProvisioningValue", "/wiki\n***"],
+    ["/WIKI opaque`Provisioning`Value", "/WIKI ***"],
+    ["/wiki `opaque\"Provisioning'Value`", "/wiki ***"],
+    ['/wiki "opaque"ProvisioningValue', "/wiki ***"],
+    ["/wiki 'opaque'ProvisioningValue", "/wiki ***"],
+    ["/wikipedia ordinaryValue", "/wikipedia ordinaryValue"],
+    ["/wiki", "/wiki"],
+  ])("masks the complete Wiki command argument in %s", (input, expected) => {
+    expect(redactSensitiveText(input, { mode: "tools" })).toBe(expected);
+  });
+
   it("masks URL userinfo and connection-string passwords", () => {
     const input = [
       "https://browser-user:browser-password-1234567890@api.example.test/v1",

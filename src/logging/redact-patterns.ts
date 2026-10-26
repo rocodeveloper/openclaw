@@ -476,7 +476,7 @@ const WIKI_COMMAND_ARGUMENT_MATCHER = Object.freeze({
   source: "wiki-command-argument",
   *exec(text: string): Iterable<RedactMatch> {
     for (const match of text.matchAll(
-      /(?:^|[\s"'`])\/wiki[ \t]+("[^"\r\n]*"|'[^'\r\n]*'|[^\s"'`]+)/gi,
+      /(?:^|[\s"'`])\/\s*wiki(?:\s*:\s*|\s+)("[^"\r\n]*"\S*|'[^'\r\n]*'\S*|\S+)/gi,
     )) {
       yield {
         match: match[0],
