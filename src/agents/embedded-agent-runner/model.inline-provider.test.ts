@@ -11,15 +11,16 @@ import { makeModel } from "./model.test-harness.js";
 
 describe("buildInlineProviderModels", () => {
   it.each([
-    { input: undefined, expected: ["text", "audio"] },
-    { input: ["text"] as const, expected: ["text"] },
+    { name: "no model override", models: [], expected: ["text", "audio"] },
+    { name: "text-only override", models: [makeModel("native-model")], expected: ["text"] },
   ])(
-    "preserves only the effective configured media capability for $input",
-    ({ input, expected }) => {
+    "preserves only the effective configured media capability for $name",
+    ({ models, expected }) => {
       const provider = "audio-fixture";
       const providerConfig = {
         api: "google-generative-ai" as const,
         baseUrl: "https://proxy.example.test/v1beta",
+        models,
       };
       const discoveredModel = completeInlineProviderModel(
         {
@@ -29,13 +30,12 @@ describe("buildInlineProviderModels", () => {
         },
         providerConfig,
       );
-      const configured = { ...makeModel("native-model"), input: input ? [...input] : undefined };
       const resolved = expectDefined(
         applyConfiguredProviderOverrides({
           provider,
           modelId: "native-model",
           discoveredModel,
-          providerConfig: { ...providerConfig, models: [configured] },
+          providerConfig,
           manifestAlias: { provider },
           runtimeHooks: createProviderRuntimeTestMock({ handledDynamicProviders: [] }),
         }),
