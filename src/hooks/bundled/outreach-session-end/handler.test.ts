@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { expectDefined } from "@openclaw/normalization-core";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { withEnvAsync } from "../../../test-utils/env.js";
 import { createInternalHookEvent as createHookEvent } from "../../internal-hooks.js";
@@ -98,7 +99,10 @@ describe("outreach-session-end hook", () => {
       storePath: "/tmp/agent/sessions.sqlite",
     });
     expect(execFileMock).toHaveBeenCalledTimes(1);
-    const [file, args, options] = execFileMock.mock.calls[0];
+    const [file, args, options] = expectDefined(
+      execFileMock.mock.calls[0],
+      "first hook script call",
+    );
     expect(file).toBe("bash");
     expect(args.slice(0, 3)).toEqual([
       path.join(bundledHooksDir, "outreach-session-end", "outreach-session-hook.sh"),
