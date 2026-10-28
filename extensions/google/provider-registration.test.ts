@@ -118,6 +118,10 @@ describe("buildGoogleProvider createStreamFn", () => {
         model: model({ provider: providerId, api, input: ["text", "image", "video"] }),
       } as never);
       expect(normalized?.input).toEqual(["text", "image"]);
+      expect(getProviderModelInput(expectDefined(normalized, "normalized model"))).toEqual([
+        "text",
+        "image",
+      ]);
     }
   });
 
