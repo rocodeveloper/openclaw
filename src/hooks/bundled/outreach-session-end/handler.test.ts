@@ -112,7 +112,7 @@ describe("outreach-session-end hook", () => {
     expect(exportedTranscripts).toEqual([
       '{"role":"user","content":"hello"}\n{"role":"assistant","content":[{"type":"text","text":"hi"}]}\n',
     ]);
-    await expect(fs.access(args[3])).rejects.toThrow();
+    await expect(fs.access(expectDefined(args[3], "transcript path"))).rejects.toThrow();
     expect((options as { env: NodeJS.ProcessEnv }).env.OPENCLAW_STATE_DIR).toBe(stateDir);
   });
 
