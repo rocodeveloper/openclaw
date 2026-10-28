@@ -2,6 +2,7 @@
 import { toErrorObject as toLintErrorObject } from "openclaw/plugin-sdk/error-runtime";
 import {
   completeSimple,
+  getProviderModelInput,
   type Model,
   type ProviderContext,
   type ProviderModel,
@@ -289,10 +290,10 @@ describeLive("google plugin live", () => {
       modelId: catalogModel.id,
       model: catalogModel,
     } as never) as ProviderModel<"google-generative-ai"> | undefined;
-    expect(model?.input).toContain("video");
     if (!model) {
       throw new Error("registered Google provider did not prepare its native video model");
     }
+    expect(getProviderModelInput(model)).toContain("video");
 
     const registeredStream = provider.createStreamFn?.({
       provider: "google",
