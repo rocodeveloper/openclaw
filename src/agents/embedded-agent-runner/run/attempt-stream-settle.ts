@@ -2,6 +2,7 @@ import {
   isAnthropicServerToolClearingEnabled,
   resolveCompactionReplayEligibility,
 } from "@openclaw/ai/transports";
+import { getProviderModelInput } from "../../../../packages/ai/src/provider-types.js";
 import type { ModelCompatConfig } from "../../../config/types.models.js";
 import { formatErrorMessage } from "../../../infra/errors.js";
 import { createOpenAIServiceTierObservationWrapper } from "../../../llm/providers/stream-wrappers/openai-service-tier-observation.js";
@@ -468,7 +469,7 @@ export async function prepareEmbeddedAttemptTransport(input: {
   };
   const audioDelivery = resolveAttemptAudioDelivery({
     cfg: attempt.config,
-    modelInput: attempt.model.input,
+    modelInput: getProviderModelInput(attempt.model),
     agentDir: input.agentDir,
     workspaceDir: input.workspaceDir,
     signal: input.abortSignal,

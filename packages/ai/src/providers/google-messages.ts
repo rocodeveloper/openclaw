@@ -1,6 +1,11 @@
 import type { Part } from "@google/genai";
 import { isImageWithMediaPayload } from "../media-payload.js";
-import type { ProviderContext, ProviderModel, VideoContent } from "../provider-types.js";
+import {
+  getProviderModelInput,
+  type ProviderContext,
+  type ProviderModel,
+  type VideoContent,
+} from "../provider-types.js";
 import {
   coerceTransportToolCallArguments,
   sanitizeTransportPayloadText,
@@ -105,7 +110,7 @@ export function projectGoogleMessages(params: {
         }
         if (
           item.type === "audio" &&
-          (model.api !== "google-generative-ai" || !model.input.includes("audio"))
+          (model.api !== "google-generative-ai" || !getProviderModelInput(model).includes("audio"))
         ) {
           return [{ text: "(audio omitted: provider does not support native audio)" }];
         }

@@ -1,5 +1,9 @@
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import {
+  getProviderModelInput,
+  withProviderModelInput,
+} from "../../../packages/ai/src/provider-types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import type { Model } from "../../llm/types.js";
 import { setCurrentPluginMetadataSnapshot } from "../../plugins/current-plugin-metadata.test-support.js";
@@ -153,22 +157,43 @@ describe("resolved model Tool Search policy", () => {
 });
 
 describe("resolved model audio input", () => {
+  it("revokes native audio when normalization changes the final transport", () => {
+    const original = withProviderModelInput(model({ api: "google-generative-ai" }), [
+      "text",
+      "image",
+      "audio",
+    ]);
+    const resolved = normalizeResolvedModel({
+      provider: original.provider,
+      model: original,
+      runtimeHooks: {
+        ...resolveRuntimeHooks(),
+        normalizeProviderTransportWithPlugin: () => ({ api: "openai-completions" }),
+      },
+    });
+    expect(resolved.api).toBe("openai-completions");
+    expect(getProviderModelInput(resolved)).toEqual(["text", "image"]);
+    expect(getProviderModelInput(original)).toEqual(["text", "image", "audio"]);
+  });
+
   it.each([
     ["google-customer", "google-generative-ai", true],
     ["custom-host", "openai-completions", false],
   ] as const)("keeps configured audio input for %s on %s: %s", (provider, api, expected) => {
     const resolved = normalizeResolvedModel({
       provider,
-      model: model({
-        id: "gemini-3.5-flash-lite",
-        provider,
-        api,
-        baseUrl: "https://generativelanguage.googleapis.com/v1beta",
-        input: ["text", "image", "audio"] as never,
-      }),
+      model: withProviderModelInput(
+        model({
+          id: "gemini-3.5-flash-lite",
+          provider,
+          api,
+          baseUrl: "https://generativelanguage.googleapis.com/v1beta",
+        }),
+        ["text", "image", "audio"],
+      ),
     });
 
-    expect((resolved.input as string[]).includes("audio")).toBe(expected);
-    expect(resolved.input).toEqual(expect.arrayContaining(["text", "image"]));
+    expect(getProviderModelInput(resolved).includes("audio")).toBe(expected);
+    expect(resolved.input).toEqual(["text", "image"]);
   });
 });

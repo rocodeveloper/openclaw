@@ -81,6 +81,26 @@ function createRegistry(
 }
 
 describe("ModelRegistry source composition", () => {
+  it("preserves provider media through request catalog snapshots without widening canonical input", () => {
+    const registry = createRegistry({
+      authored: null,
+      generated: {
+        ...generated,
+        models: [{ id: "native-media", input: ["text", "image", "audio", "video"] }],
+      },
+    });
+    expect(registry.find(provider, "native-media")).toMatchObject({
+      input: ["text", "image"],
+      providerMediaInput: ["audio", "video"],
+    });
+    const requestRegistry = registry.fork(AuthStorage.inMemory({}));
+    requestRegistry.refresh();
+    expect(requestRegistry.find(provider, "native-media")).toMatchObject({
+      input: ["text", "image"],
+      providerMediaInput: ["audio", "video"],
+    });
+  });
+
   it.each([rootUrl, catalogUrl])(
     "preserves compatibility and context choices on their source route at %s",
     (baseUrl) => {

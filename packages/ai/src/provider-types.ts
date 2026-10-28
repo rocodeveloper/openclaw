@@ -15,6 +15,37 @@ export type ProviderContext = Omit<Llm.Context, "messages"> & { messages: Provid
 export type ProviderModel<TApi extends Llm.Api = Llm.Api> = Omit<Llm.Model<TApi>, "input"> & {
   input: ModelInputContent["type"][];
 };
+export type ProviderOnlyInput = Exclude<ProviderModel["input"][number], Llm.Model["input"][number]>;
+export type ProviderModelInputMetadata = {
+  providerMediaInput?: ProviderOnlyInput[];
+};
+
+export function withProviderModelInput<TModel extends object>(
+  model: TModel,
+  input: readonly ProviderModel["input"][number][],
+): Omit<TModel, "input" | "providerMediaInput"> & {
+  input: Llm.Model["input"];
+  providerMediaInput: ProviderOnlyInput[];
+} {
+  const canonicalInput: Llm.Model["input"] = input.filter(
+    (type) => type === "text" || type === "image",
+  );
+  const providerMediaInput: ProviderOnlyInput[] = input.filter(
+    (type) => type === "audio" || type === "video",
+  );
+  return {
+    ...model,
+    input: [...new Set(canonicalInput)],
+    providerMediaInput: [...new Set(providerMediaInput)],
+  };
+}
+
+export function getProviderModelInput(
+  model: Pick<ProviderModel, "input"> & ProviderModelInputMetadata,
+): ProviderModel["input"] {
+  return [...new Set([...model.input, ...(model.providerMediaInput ?? [])])];
+}
+
 export type ProviderContextHandoff = () => Promise<ProviderContext>;
 export type ProviderStreamOptions = Llm.StreamOptions & {
   [PROVIDER_CONTEXT_HANDOFF]?: ProviderContextHandoff;

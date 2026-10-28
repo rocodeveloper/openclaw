@@ -1,5 +1,11 @@
+import { expectDefined } from "@openclaw/normalization-core";
 // Google tests cover provider registration plugin behavior.
-import type { Model } from "openclaw/plugin-sdk/llm";
+import {
+  getProviderModelInput,
+  withProviderModelInput,
+  type Model,
+  type ProviderModel,
+} from "openclaw/plugin-sdk/llm";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { buildGoogleProvider } from "./provider-registration.js";
 
@@ -13,20 +19,23 @@ vi.mock("./transport-stream.js", () => ({
   createGoogleVertexTransportStreamFn: streamFns.createVertex,
 }));
 
-function model(overrides: Partial<Model> = {}): Model {
-  return {
-    id: "gemini-2.5-flash",
-    name: "Gemini 2.5 Flash",
-    provider: "google-vertex",
-    api: "google-generative-ai",
-    baseUrl: "https://aiplatform.googleapis.com",
-    reasoning: true,
-    input: ["text"],
-    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: 1_048_576,
-    maxTokens: 65_536,
-    ...overrides,
-  } as Model;
+function model(overrides: Partial<ProviderModel> = {}): Model {
+  return withProviderModelInput(
+    {
+      id: "gemini-2.5-flash",
+      name: "Gemini 2.5 Flash",
+      provider: "google-vertex",
+      api: "google-generative-ai",
+      baseUrl: "https://aiplatform.googleapis.com",
+      reasoning: true,
+      input: ["text"],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 1_048_576,
+      maxTokens: 65_536,
+      ...overrides,
+    },
+    overrides.input ?? ["text"],
+  );
 }
 
 describe("buildGoogleProvider createStreamFn", () => {
@@ -87,11 +96,14 @@ describe("buildGoogleProvider createStreamFn", () => {
         provider: "google",
         api: "google-generative-ai",
         baseUrl,
-        input: ["text", "image", "video"] as never,
+        input: ["text", "image", "video"],
       }),
     } as never);
 
-    expect(((normalized?.input ?? []) as string[]).includes("video")).toBe(expected);
+    expect(normalized?.input).toEqual(["text", "image"]);
+    expect(
+      getProviderModelInput(expectDefined(normalized, "normalized model")).includes("video"),
+    ).toBe(expected);
   });
 
   it("strips inherited video for Vertex and non-Google provider routes", () => {
@@ -103,7 +115,7 @@ describe("buildGoogleProvider createStreamFn", () => {
       const normalized = provider.normalizeResolvedModel?.({
         provider: providerId,
         modelId: "gemini-2.5-flash",
-        model: model({ provider: providerId, api, input: ["text", "image", "video"] as never }),
+        model: model({ provider: providerId, api, input: ["text", "image", "video"] }),
       } as never);
       expect(normalized?.input).toEqual(["text", "image"]);
     }
@@ -130,10 +142,12 @@ describe("buildGoogleProvider createStreamFn", () => {
         }),
       } as never);
 
-      expect(((normalized?.input ?? []) as string[]).includes("audio")).toBe(expected);
-      expect(((normalized?.input ?? []) as string[]).includes("video")).toBe(
-        expected && providerId === "google",
-      );
+      expect(
+        getProviderModelInput(expectDefined(normalized, "normalized model")).includes("audio"),
+      ).toBe(expected);
+      expect(
+        getProviderModelInput(expectDefined(normalized, "normalized model")).includes("video"),
+      ).toBe(expected && providerId === "google");
     },
   );
 
@@ -146,10 +160,14 @@ describe("buildGoogleProvider createStreamFn", () => {
         provider: "google-customer",
         api: "google-generative-ai",
         baseUrl: "https://proxy.example.test/v1beta",
-        input: ["text", "audio"] as never,
+        input: ["text", "audio"],
       }),
     } as never);
-    expect(normalized?.input).toEqual(["text", "audio"]);
+    expect(normalized?.input).toEqual(["text"]);
+    expect(getProviderModelInput(expectDefined(normalized, "normalized model"))).toEqual([
+      "text",
+      "audio",
+    ]);
   });
 
   it.each(["google-vertex"])(

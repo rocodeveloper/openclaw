@@ -1,3 +1,4 @@
+import { getProviderModelInput, withProviderModelInput } from "openclaw/plugin-sdk/llm";
 import type { ProviderReasoningOutputModeContext } from "openclaw/plugin-sdk/plugin-entry";
 import { runLiveProviderCatalog } from "openclaw/plugin-sdk/provider-catalog-live-runtime";
 import { createProviderApiKeyAuthMethod } from "openclaw/plugin-sdk/provider-entry";
@@ -26,25 +27,21 @@ import {
 function normalizeGoogleMediaInput(
   ctx: Parameters<NonNullable<ProviderPlugin["normalizeResolvedModel"]>>[0],
 ) {
-  const input = (ctx.model.input as string[]).filter(
-    (type) => type !== "video" && type !== "audio",
-  );
+  const providerInput = getProviderModelInput(ctx.model);
+  const input = providerInput.filter((type) => type !== "video" && type !== "audio");
   const isAiStudioGeminiRoute =
     ctx.model.api === "google-generative-ai" &&
     isOfficialGoogleAiStudioBaseUrl(ctx.model.baseUrl) &&
     isGoogleNativeVideoModelId(ctx.modelId);
   const supportsVideo = isAiStudioGeminiRoute && ctx.provider === "google";
-  return {
-    ...ctx.model,
-    input: [
-      ...input,
-      ...(supportsVideo ? ["video"] : []),
-      ...(isAiStudioGeminiRoute ||
-      (ctx.model.api === "google-generative-ai" && (ctx.model.input as string[]).includes("audio"))
-        ? ["audio"]
-        : []),
-    ],
-  } as typeof ctx.model;
+  return withProviderModelInput(ctx.model, [
+    ...input,
+    ...(supportsVideo ? ["video" as const] : []),
+    ...(isAiStudioGeminiRoute ||
+    (ctx.model.api === "google-generative-ai" && providerInput.includes("audio"))
+      ? ["audio" as const]
+      : []),
+  ]);
 }
 
 function resolveGoogleReasoningOutputMode(

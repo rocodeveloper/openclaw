@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import { createServer } from "node:http";
 import os from "node:os";
 import path from "node:path";
+import { expectDefined } from "@openclaw/normalization-core";
 import { expect, it, vi } from "vitest";
 import { normalizeConfig } from "./config.js";
 import { setGroupToken } from "./token-store.js";
@@ -98,7 +99,7 @@ it("executes Wiki tools with group credentials and refuses unauthorized or overs
       [second, "beta"],
     ] as const) {
       const result = await tool.execute("call", { tool: "search", arguments: { query } });
-      expect(JSON.parse(result.content[0].text)).toMatchObject({
+      expect(JSON.parse(expectDefined(result.content[0], "Wiki response").text)).toMatchObject({
         content: [{ type: "text", text: "group answer" }],
       });
     }
@@ -115,29 +116,33 @@ it("executes Wiki tools with group credentials and refuses unauthorized or overs
       },
     ]);
     const beforeRefusal = requests;
-    expect((await first.execute("denied", { tool: "delete", arguments: {} })).content[0].text).toBe(
-      "Wiki MCP tool is not allowed. Allowed tools: search.",
-    );
+    expect((await first.execute("denied", { tool: "delete", arguments: {} })).content).toEqual([
+      { type: "text", text: "Wiki MCP tool is not allowed. Allowed tools: search." },
+    ]);
     expect(
       (
         await toolFor("120363000000000003@g.us").execute("missing", {
           tool: "search",
           arguments: {},
         })
-      ).content[0].text,
-    ).toContain("not provisioned");
+      ).content,
+    ).toEqual([{ type: "text", text: expect.stringContaining("not provisioned") }]);
     expect(requests).toBe(beforeRefusal);
     expect(
-      (await first.execute("large", { tool: "search", arguments: { query: "large" } })).content[0]
-        .text,
-    ).toBe("Wiki MCP response exceeded the 256-character safety limit.");
+      (await first.execute("large", { tool: "search", arguments: { query: "large" } })).content,
+    ).toEqual([
+      { type: "text", text: "Wiki MCP response exceeded the 256-character safety limit." },
+    ]);
     const failed = await second.execute("failure", {
       tool: "search",
       arguments: { query: "failure" },
     });
-    expect(failed.content[0].text).toBe(
-      "Wiki MCP request failed. Ask the owner to check the endpoint and token configuration.",
-    );
+    expect(failed.content).toEqual([
+      {
+        type: "text",
+        text: "Wiki MCP request failed. Ask the owner to check the endpoint and token configuration.",
+      },
+    ]);
     expect(JSON.stringify([failed, warn.mock.calls])).not.toContain("fixture-a-credential");
     expect(JSON.stringify([failed, warn.mock.calls])).not.toContain("fixture-b-credential");
   } finally {

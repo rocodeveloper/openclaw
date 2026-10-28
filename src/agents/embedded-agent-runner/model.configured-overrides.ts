@@ -6,6 +6,10 @@ import {
   normalizeLowercaseStringOrEmpty,
   normalizeOptionalString,
 } from "@openclaw/normalization-core/string-coerce";
+import {
+  getProviderModelInput,
+  withProviderModelInput,
+} from "../../../packages/ai/src/provider-types.js";
 import { mergeModelCost } from "../../config/model-cost.js";
 import { findConfiguredProviderModel } from "../../config/model-provider-config.js";
 import { materializeConfiguredProviderModelRows } from "../../config/model-provider-rows.js";
@@ -251,19 +255,23 @@ export function mergeCatalogInlineModel(
     readModelParams(catalogModel.params),
     readModelParams(inlineModel.params),
   );
-  return {
-    ...catalogModel,
-    ...inlineModel,
-    api: inlineModel.api ?? catalogModel.api,
-    baseUrl:
-      normalizeOptionalString(inlineModel.baseUrl) ?? normalizeOptionalString(catalogModel.baseUrl),
-    headers: inlineModel.headers ?? catalogModel.headers,
-    contextWindow: inlineModel.contextWindow ?? catalogModel.contextWindow,
-    contextTokens: inlineModel.contextTokens ?? catalogModel.contextTokens,
-    compat,
-    ...(mediaInput ? { mediaInput } : {}),
-    ...(params ? { params } : {}),
-  } as Model;
+  return withProviderModelInput(
+    {
+      ...catalogModel,
+      ...inlineModel,
+      api: inlineModel.api ?? catalogModel.api,
+      baseUrl:
+        normalizeOptionalString(inlineModel.baseUrl) ??
+        normalizeOptionalString(catalogModel.baseUrl),
+      headers: inlineModel.headers ?? catalogModel.headers,
+      contextWindow: inlineModel.contextWindow ?? catalogModel.contextWindow,
+      contextTokens: inlineModel.contextTokens ?? catalogModel.contextTokens,
+      compat,
+      ...(mediaInput ? { mediaInput } : {}),
+      ...(params ? { params } : {}),
+    } as Model,
+    getProviderModelInput(inlineModel),
+  );
 }
 
 function mergeModelParams(
@@ -490,7 +498,7 @@ export function applyConfiguredProviderOverrides(params: {
     modelId,
     modelName: metadataOverrideModel?.name ?? discoveredModel.name,
     input: metadataOverrideModel?.input,
-    fallbackInput: discoveredModel.input,
+    fallbackInput: getProviderModelInput(discoveredModel),
   });
   const providerDefaultApi = resolveConfiguredProviderDefaultApi({
     ...params,
@@ -594,44 +602,46 @@ export function applyConfiguredProviderOverrides(params: {
   return attachModelProviderRequestRouteFacts(
     attachModelProviderLocalService(
       attachModelProviderRequestTransport(
-        {
-          ...discoveredSizing,
-          provider: params.provider,
-          api: requestConfig.api ?? "openai-responses",
-          baseUrl: requestConfig.baseUrl ?? discoveredModel.baseUrl,
-          reasoning: resolvedReasoning,
-          input: normalizedInput,
-          cost: mergeConfiguredModelCost({
-            ...params,
-            configuredModel: metadataOverrideModel,
-            catalogCost: discoveredModel.cost,
-          }),
-          contextWindow,
-          contextTokens: metadataOverrideModel?.contextTokens ?? discoveredModel.contextTokens,
-          ...(normalizedResolvedMaxTokens !== undefined
-            ? {
-                maxTokens: normalizedResolvedMaxTokens,
-                maxTokensSource:
-                  configuredMaxTokens !== undefined
-                    ? "configured"
-                    : (discoveredModel.maxTokensSource ?? "discovered"),
-              }
-            : {}),
-          ...(resolvedParams ? { params: resolvedParams } : {}),
-          ...(requestTimeoutMs !== undefined ? { requestTimeoutMs } : {}),
-          headers: requestConfig.headers,
-          ...(providerConfig.authHeader !== undefined
-            ? { authHeader: providerConfig.authHeader }
-            : {}),
-          compat: resolvedCompat,
-          mediaInput: mergeModelMediaInput(
-            mergeModelMediaInput(
-              configuredStaticCatalogModel?.mediaInput,
-              discoveredModel.mediaInput,
+        withProviderModelInput(
+          {
+            ...discoveredSizing,
+            provider: params.provider,
+            api: requestConfig.api ?? "openai-responses",
+            baseUrl: requestConfig.baseUrl ?? discoveredModel.baseUrl,
+            reasoning: resolvedReasoning,
+            cost: mergeConfiguredModelCost({
+              ...params,
+              configuredModel: metadataOverrideModel,
+              catalogCost: discoveredModel.cost,
+            }),
+            contextWindow,
+            contextTokens: metadataOverrideModel?.contextTokens ?? discoveredModel.contextTokens,
+            ...(normalizedResolvedMaxTokens !== undefined
+              ? {
+                  maxTokens: normalizedResolvedMaxTokens,
+                  maxTokensSource:
+                    configuredMaxTokens !== undefined
+                      ? "configured"
+                      : (discoveredModel.maxTokensSource ?? "discovered"),
+                }
+              : {}),
+            ...(resolvedParams ? { params: resolvedParams } : {}),
+            ...(requestTimeoutMs !== undefined ? { requestTimeoutMs } : {}),
+            headers: requestConfig.headers,
+            ...(providerConfig.authHeader !== undefined
+              ? { authHeader: providerConfig.authHeader }
+              : {}),
+            compat: resolvedCompat,
+            mediaInput: mergeModelMediaInput(
+              mergeModelMediaInput(
+                configuredStaticCatalogModel?.mediaInput,
+                discoveredModel.mediaInput,
+              ),
+              metadataOverrideModel?.mediaInput,
             ),
-            metadataOverrideModel?.mediaInput,
-          ),
-        },
+          } satisfies Omit<ProviderRuntimeModel, "input">,
+          normalizedInput,
+        ),
         providerRequest,
       ),
       providerConfig.localService,

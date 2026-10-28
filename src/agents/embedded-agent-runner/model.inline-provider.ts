@@ -3,7 +3,10 @@ import { normalizeOptionalLowercaseString } from "@openclaw/normalization-core/s
 /**
  * Converts inline provider model config into runtime model definitions.
  */
-import type { ProviderModel } from "../../../packages/ai/src/provider-types.js";
+import {
+  withProviderModelInput,
+  type ProviderModel,
+} from "../../../packages/ai/src/provider-types.js";
 import { MODEL_APIS } from "../../config/model-config-vocabulary.js";
 import { resolveMergedModelProviderModels } from "../../config/model-provider-config.js";
 import type { ModelDefinitionConfig, ModelProviderConfig } from "../../config/types.js";
@@ -184,24 +187,26 @@ export function completeInlineProviderModel(
   model: InlineModelEntry,
   providerConfig: ModelProviderConfig,
 ): ProviderRuntimeModel {
-  return {
-    ...model,
-    name: model.name || model.id,
-    api: model.api ?? providerConfig.api ?? "openai-responses",
-    baseUrl: model.baseUrl ?? "",
-    reasoning: model.reasoning ?? false,
-    input: resolveProviderModelInput({
+  return withProviderModelInput(
+    {
+      ...model,
+      name: model.name || model.id,
+      api: model.api ?? providerConfig.api ?? "openai-responses",
+      baseUrl: model.baseUrl ?? "",
+      reasoning: model.reasoning ?? false,
+      cost: model.cost ?? normalizeResolvedPricing({}),
+      contextWindow:
+        model.contextWindow ?? Math.max(model.contextTokens ?? 0, DEFAULT_CONTEXT_TOKENS),
+      ...(model.contextWindow === undefined ? { contextWindowSource: "synthetic" as const } : {}),
+      contextTokens: model.contextTokens,
+      maxTokens: model.maxTokens ?? DEFAULT_CONTEXT_TOKENS,
+      ...(providerConfig.authHeader !== undefined ? { authHeader: providerConfig.authHeader } : {}),
+    } satisfies Omit<ProviderRuntimeModel, "input">,
+    resolveProviderModelInput({
       provider: model.provider,
       modelId: model.id,
       modelName: model.name,
       input: model.input,
     }),
-    cost: model.cost ?? normalizeResolvedPricing({}),
-    contextWindow:
-      model.contextWindow ?? Math.max(model.contextTokens ?? 0, DEFAULT_CONTEXT_TOKENS),
-    ...(model.contextWindow === undefined ? { contextWindowSource: "synthetic" as const } : {}),
-    contextTokens: model.contextTokens,
-    maxTokens: model.maxTokens ?? DEFAULT_CONTEXT_TOKENS,
-    ...(providerConfig.authHeader !== undefined ? { authHeader: providerConfig.authHeader } : {}),
-  } as ProviderRuntimeModel;
+  );
 }

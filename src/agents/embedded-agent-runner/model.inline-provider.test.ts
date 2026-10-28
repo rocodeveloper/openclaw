@@ -1,8 +1,54 @@
+import { expectDefined } from "@openclaw/normalization-core";
 import { describe, expect, it } from "vitest";
-import { buildInlineProviderModels } from "./model.inline-provider.js";
+import { getProviderModelInput } from "../../../packages/ai/src/provider-types.js";
+import {
+  applyConfiguredProviderOverrides,
+  mergeCatalogInlineModel,
+} from "./model.configured-overrides.js";
+import { buildInlineProviderModels, completeInlineProviderModel } from "./model.inline-provider.js";
+import { createProviderRuntimeTestMock } from "./model.provider-runtime.test-support.js";
 import { makeModel } from "./model.test-harness.js";
 
 describe("buildInlineProviderModels", () => {
+  it.each([
+    { input: undefined, expected: ["text", "audio"] },
+    { input: ["text"] as const, expected: ["text"] },
+  ])(
+    "preserves only the effective configured media capability for $input",
+    ({ input, expected }) => {
+      const provider = "audio-fixture";
+      const providerConfig = {
+        api: "google-generative-ai" as const,
+        baseUrl: "https://proxy.example.test/v1beta",
+      };
+      const discoveredModel = completeInlineProviderModel(
+        {
+          ...makeModel("native-model"),
+          provider,
+          input: ["text", "audio"],
+        },
+        providerConfig,
+      );
+      const configured = { ...makeModel("native-model"), input: input ? [...input] : undefined };
+      const resolved = expectDefined(
+        applyConfiguredProviderOverrides({
+          provider,
+          modelId: "native-model",
+          discoveredModel,
+          providerConfig: { ...providerConfig, models: [configured] },
+          manifestAlias: { provider },
+          runtimeHooks: createProviderRuntimeTestMock({ handledDynamicProviders: [] }),
+        }),
+        "resolved model",
+      );
+      expect(resolved.input).toEqual(["text"]);
+      expect(getProviderModelInput(resolved)).toEqual(expected);
+      expect(getProviderModelInput(mergeCatalogInlineModel(discoveredModel, resolved))).toEqual(
+        expected,
+      );
+    },
+  );
+
   it("inherits the configured Pi transport for models without an API override", () => {
     expect(
       buildInlineProviderModels({

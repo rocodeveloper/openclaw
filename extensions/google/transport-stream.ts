@@ -1,6 +1,7 @@
 import type { StreamFn } from "openclaw/plugin-sdk/agent-core";
 import {
   getEnvApiKey,
+  getProviderModelInput,
   resolveProviderContext,
   type Context,
   type Model,
@@ -158,7 +159,7 @@ function supportsGoogleNativeVideo(model: GoogleTransportModel): boolean {
     normalizeGoogleTransportRouteApi(model.api) === "google-generative-ai" &&
     isOfficialGoogleAiStudioBaseUrl(model.baseUrl) &&
     isGoogleNativeVideoModelId(model.id) &&
-    model.input.includes("video")
+    getProviderModelInput(model).includes("video")
   );
 }
 
@@ -985,7 +986,7 @@ function createGoogleTransportStreamFn(kind: CanonicalGoogleTransportApi): Strea
         const providerContext =
           supportsGoogleNativeVideo(model) ||
           (normalizeGoogleTransportRouteApi(model.api) === "google-generative-ai" &&
-            model.input.includes("audio"))
+            getProviderModelInput(model).includes("audio"))
             ? await resolveProviderContext(context, options)
             : context;
         options?.signal?.throwIfAborted();

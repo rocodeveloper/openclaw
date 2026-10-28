@@ -1,3 +1,4 @@
+import { getProviderModelInput } from "./provider-types.js";
 import type {
   Api,
   AssistantMessage,
@@ -67,8 +68,8 @@ export function transformProviderMessages<TApi extends Api>(
         content: projectUserMediaForTransport(
           message.content,
           model.input.includes("image"),
-          model.api === "openai-completions" && model.input.includes("video"),
-          model.api === "google-generative-ai" && model.input.includes("audio"),
+          model.api === "openai-completions" && getProviderModelInput(model).includes("video"),
+          model.api === "google-generative-ai" && getProviderModelInput(model).includes("audio"),
         ),
       }) as Extract<Message, { role: "user" }>;
     }),

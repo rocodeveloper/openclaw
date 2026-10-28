@@ -6,7 +6,13 @@ import path from "node:path";
 import { gzipSync } from "node:zlib";
 import { expectDefined } from "@openclaw/normalization-core";
 import { toErrorObject as toLintErrorObject } from "openclaw/plugin-sdk/error-runtime";
-import type { Model, ProviderContext } from "openclaw/plugin-sdk/llm";
+import {
+  withProviderModelInput,
+  getProviderModelInput,
+  type Model,
+  type ProviderModel,
+  type ProviderContext,
+} from "openclaw/plugin-sdk/llm";
 import { onLlmRequestActivity } from "openclaw/plugin-sdk/provider-stream-shared";
 import { withProviderAcceptanceObserver } from "openclaw/plugin-sdk/provider-transport-runtime";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -60,21 +66,23 @@ function attachModelProviderRequestTransport<TModel extends object>(
 }
 
 function buildGeminiModel(
-  overrides: Partial<Model<"google-generative-ai">> = {},
+  overrides: Partial<ProviderModel<"google-generative-ai">> = {},
 ): Model<"google-generative-ai"> {
-  return {
-    id: "gemini-2.5-pro",
-    name: "Gemini 2.5 Pro",
-    api: "google-generative-ai",
-    provider: "google",
-    baseUrl: "https://generativelanguage.googleapis.com/v1beta",
-    reasoning: true,
-    input: ["text"],
-    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: 128000,
-    maxTokens: 8192,
-    ...overrides,
-  };
+  return withProviderModelInput(
+    {
+      id: "gemini-2.5-pro",
+      name: "Gemini 2.5 Pro",
+      api: "google-generative-ai",
+      provider: "google",
+      baseUrl: "https://generativelanguage.googleapis.com/v1beta",
+      reasoning: true,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 128000,
+      maxTokens: 8192,
+      ...overrides,
+    } satisfies Omit<Model<"google-generative-ai">, "input">,
+    overrides.input ?? ["text"],
+  );
 }
 
 function buildGoogleVertexModel(
@@ -96,7 +104,7 @@ function buildGoogleVertexModel(
 }
 
 function buildGeminiUserParams(
-  model: Partial<Model<"google-generative-ai">> = {},
+  model: Partial<ProviderModel<"google-generative-ai">> = {},
   options?: Record<string, unknown>,
 ) {
   return buildGoogleGenerativeAiParams(
@@ -118,15 +126,16 @@ function buildGeminiReplayParams(messages: Record<string, unknown>[]) {
 
 async function runGeminiStreamResult(
   params: {
-    model?: Model<"google-generative-ai">;
+    model?: ProviderModel<"google-generative-ai">;
     context?: Parameters<ReturnType<typeof createGoogleGenerativeAiTransportStreamFn>>[1];
     options?: Record<string, unknown>;
   } = {},
 ) {
   const streamFn = createGoogleGenerativeAiTransportStreamFn();
+  const providerModel = params.model ?? buildGeminiModel();
   const stream = await Promise.resolve(
     streamFn(
-      params.model ?? buildGeminiModel(),
+      withProviderModelInput(providerModel, getProviderModelInput(providerModel)),
       (params.context ?? {
         messages: [{ role: "user", content: "hello", timestamp: 0 }],
       }) as Parameters<typeof streamFn>[1],
@@ -426,7 +435,7 @@ function googleToolResultMessage(name: "screenshot" | "weather"): Record<string,
 function buildGoogleToolResultParams(
   content: Array<Record<string, unknown>>,
   options: {
-    model?: Partial<Model<"google-generative-ai">>;
+    model?: Partial<ProviderModel<"google-generative-ai">>;
     toolName?: string;
   } = {},
 ) {

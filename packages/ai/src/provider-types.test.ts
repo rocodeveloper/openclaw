@@ -11,6 +11,8 @@ import type {
 import { describe, expect, expectTypeOf, it, vi } from "vitest";
 import {
   PROVIDER_CONTEXT_HANDOFF,
+  withProviderModelInput,
+  type AudioContent,
   resolveProviderContext,
   type ProviderContextHandoff,
   type ProviderStreamOptions,
@@ -27,14 +29,16 @@ import {
 describe("provider call types", () => {
   it("keeps video at the provider boundary without widening canonical contracts", () => {
     expectTypeOf<VideoContent>().toEqualTypeOf<Omit<ImageContent, "type"> & { type: "video" }>();
-    expectTypeOf<MediaContent>().toEqualTypeOf<ImageContent | VideoContent>();
+    expectTypeOf<MediaContent>().toEqualTypeOf<ImageContent | VideoContent | AudioContent>();
     expectTypeOf<ModelInputContent>().toEqualTypeOf<TextContent | MediaContent>();
     expectTypeOf<ProviderUserMessage["content"]>().toEqualTypeOf<string | ModelInputContent[]>();
     expectTypeOf<ProviderMessage>().toEqualTypeOf<
       ProviderUserMessage | Exclude<Message, UserMessage>
     >();
     expectTypeOf<ProviderContext["messages"][number]>().toEqualTypeOf<ProviderMessage>();
-    expectTypeOf<ProviderModel["input"][number]>().toEqualTypeOf<"text" | "image" | "video">();
+    expectTypeOf<ProviderModel["input"][number]>().toEqualTypeOf<
+      "text" | "image" | "video" | "audio"
+    >();
     expectTypeOf<Parameters<ProviderStreamFunction>[0]>().toEqualTypeOf<ProviderModel>();
     expectTypeOf<Parameters<ProviderStreamFunction>[1]>().toEqualTypeOf<ProviderContext>();
     expectTypeOf<Parameters<ProviderStreamFunction>[2]>().toEqualTypeOf<
@@ -47,6 +51,7 @@ describe("provider call types", () => {
 
     expectTypeOf<UserMessage["content"]>().toEqualTypeOf<string | (TextContent | ImageContent)[]>();
     expectTypeOf<Context["messages"][number]>().toEqualTypeOf<Message>();
+    expectTypeOf<ReturnType<typeof withProviderModelInput<Model>>>().toExtend<Model>();
     expectTypeOf<Model["input"][number]>().toEqualTypeOf<"text" | "image">();
     expectTypeOf<ToolResultMessage["content"][number]>().toEqualTypeOf<
       TextContent | ImageContent

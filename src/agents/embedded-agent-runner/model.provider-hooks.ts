@@ -1,5 +1,9 @@
 import { findNormalizedProviderValue } from "@openclaw/model-catalog-core/provider-id";
 import { asFiniteNumber } from "@openclaw/normalization-core/number-coercion";
+import {
+  getProviderModelInput,
+  withProviderModelInput,
+} from "../../../packages/ai/src/provider-types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import type { Api, Model } from "../../llm/types.js";
 import { getCurrentPluginMetadataSnapshot } from "../../plugins/current-plugin-metadata-snapshot.js";
@@ -117,13 +121,15 @@ export function normalizeResolvedModel(params: {
     provider: params.provider,
     modelId: params.model.id,
     modelName: params.model.name,
-    input: params.model.input,
+    input: getProviderModelInput(params.model),
   });
-  const normalizedInputModel = {
-    ...params.model,
-    input: resolvedInput,
-    cost: normalizeModelCost(params.model.cost),
-  } as Model & ProviderRuntimeModel;
+  const normalizedInputModel: Model & ProviderRuntimeModel = withProviderModelInput(
+    {
+      ...params.model,
+      cost: normalizeModelCost(params.model.cost),
+    },
+    resolvedInput,
+  );
   const runtimeHooks = params.runtimeHooks ?? resolveRuntimeHooks();
   const hookParams = {
     provider: params.provider,
@@ -195,14 +201,16 @@ export function normalizeResolvedModel(params: {
       ? "tools"
       : undefined);
   // Capture the final route's preference once; tool construction must not reload provider policy.
-  const modelWithToolSearch = {
-    ...modelWithProviderTimeout,
-    input:
-      modelWithProviderTimeout.api === GOOGLE_NATIVE_AUDIO_API
-        ? modelWithProviderTimeout.input
-        : modelWithProviderTimeout.input.filter((type: string) => type !== "audio"),
-    toolSearchMode,
-  };
+  const providerInput = getProviderModelInput(modelWithProviderTimeout);
+  const modelWithToolSearch = withProviderModelInput(
+    {
+      ...modelWithProviderTimeout,
+      toolSearchMode,
+    },
+    modelWithProviderTimeout.api === GOOGLE_NATIVE_AUDIO_API
+      ? providerInput
+      : providerInput.filter((type) => type !== "audio"),
+  );
   const canonicalModelId = canonicalizeOpenAIModelId(params.provider, modelWithToolSearch.id);
   return inheritModelProviderRequestRouteFacts(
     params.model,

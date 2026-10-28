@@ -187,6 +187,8 @@ describe("resolveBundledStaticCatalogModel", () => {
       compat: undefined,
       contextTokens: undefined,
       contextWindow: 262144,
+      contextWindows: undefined,
+      contextWindowDefault: undefined,
       cost: {
         ...cost,
         tieredPricing: [
@@ -197,6 +199,7 @@ describe("resolveBundledStaticCatalogModel", () => {
       headers: undefined,
       id: "mistral-medium-3-5",
       input: ["text", "image"],
+      providerMediaInput: [],
       maxTokens: 8192,
       mediaInput: { image: { maxSidePx: 2048, preferredSidePx: 1536, tokenMode: "provider" } },
       name: "Mistral Medium 3.5",

@@ -1,3 +1,4 @@
+import { getProviderModelInput } from "../../packages/ai/src/provider-types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import {
   planPreTurnAudioTranscription,
@@ -37,7 +38,7 @@ async function resolveModelAcceptsAudio(
         ...(params.workspaceDir ? { workspaceDir: params.workspaceDir } : {}),
       },
     );
-    return ((resolved.model?.input ?? []) as readonly string[]).includes("audio");
+    return resolved.model ? getProviderModelInput(resolved.model).includes("audio") : false;
   } catch {
     return false;
   }

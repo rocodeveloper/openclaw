@@ -1,13 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
+import { withProviderModelInput } from "../../packages/ai/src/provider-types.js";
 import { resolvePreTurnAudioPlan } from "./model-audio-input.js";
 
 const AUDIO_MODELS = new Set(["google/gemini-3.5-flash-lite", "google/gemini-3.1-flash-lite"]);
 
 function stubResolveModelAsync() {
   return vi.fn(async (provider: string, model: string) => ({
-    model: {
-      input: AUDIO_MODELS.has(`${provider}/${model}`) ? ["text", "image", "audio"] : ["text"],
-    },
+    model: withProviderModelInput(
+      {},
+      AUDIO_MODELS.has(`${provider}/${model}`) ? ["text", "image", "audio"] : ["text"],
+    ),
   })) as never;
 }
 

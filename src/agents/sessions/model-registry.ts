@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { normalizeResolvedPricing } from "@openclaw/llm-core";
 import { normalizeProviderId } from "@openclaw/model-catalog-core/provider-id";
+import { withProviderModelInput } from "../../../packages/ai/src/provider-types.js";
 import { projectConfigOntoRuntimeSourceSnapshot } from "../../config/runtime-source-projection.js";
 import type { ModelProviderConfig } from "../../config/types.models.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
@@ -640,30 +641,32 @@ export class ModelRegistry {
     api: string | undefined,
     catalog?: { baseUrl: string; input: Model["input"] },
   ): Model {
-    return {
-      id: model.id,
-      name: catalog ? (model.name ?? model.id) : model.name,
-      api: api as Api,
-      provider,
-      baseUrl: catalog ? catalog.baseUrl : (model.baseUrl ?? config.baseUrl!),
-      reasoning: catalog ? (model.reasoning ?? false) : model.reasoning,
-      thinkingLevelMap: model.thinkingLevelMap,
-      input: catalog ? catalog.input : model.input,
-      cost: catalog ? normalizeResolvedPricing(model.cost ?? {}) : model.cost,
-      // Missing catalog windows remain unknown on disk; estimates belong to runtime models.
-      contextWindow: model.contextWindow ?? Math.max(model.contextTokens ?? 0, 128000),
-      ...(model.contextWindow === undefined ? { contextWindowSource: "synthetic" } : {}),
-      contextTokens: model.contextTokens,
-      contextWindows: model.contextWindows,
-      contextWindowDefault: model.contextWindowDefault,
-      maxTokens: catalog ? (model.maxTokens ?? 16384) : model.maxTokens,
-      ...(catalog && model.maxTokens !== undefined
-        ? { maxTokensSource: model.maxTokensSource }
-        : {}),
-      params: model.params,
-      headers: undefined,
-      compat: model.compat,
-    } as Model;
+    return withProviderModelInput(
+      {
+        id: model.id,
+        name: catalog ? (model.name ?? model.id) : model.name,
+        api: api as Api,
+        provider,
+        baseUrl: catalog ? catalog.baseUrl : (model.baseUrl ?? config.baseUrl!),
+        reasoning: catalog ? (model.reasoning ?? false) : model.reasoning,
+        thinkingLevelMap: model.thinkingLevelMap,
+        cost: catalog ? normalizeResolvedPricing(model.cost ?? {}) : model.cost,
+        // Missing catalog windows remain unknown on disk; estimates belong to runtime models.
+        contextWindow: model.contextWindow ?? Math.max(model.contextTokens ?? 0, 128000),
+        ...(model.contextWindow === undefined ? { contextWindowSource: "synthetic" } : {}),
+        contextTokens: model.contextTokens,
+        contextWindows: model.contextWindows,
+        contextWindowDefault: model.contextWindowDefault,
+        maxTokens: catalog ? (model.maxTokens ?? 16384) : model.maxTokens,
+        ...(catalog && model.maxTokens !== undefined
+          ? { maxTokensSource: model.maxTokensSource }
+          : {}),
+        params: model.params,
+        headers: undefined,
+        compat: model.compat,
+      } as Model,
+      model.input ?? catalog?.input ?? ["text"],
+    );
   }
 
   getAll(): Model[] {
