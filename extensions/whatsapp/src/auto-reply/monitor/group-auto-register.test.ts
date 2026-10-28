@@ -173,7 +173,7 @@ describe("WhatsApp group auto-registration", () => {
     async ({ action, body, sender, registered, revoke }) => {
       currentConfig = createConfig({
         commands: { ownerAllowFrom: [ownerNumber] },
-        agents: { entries: { "configured-agent": { default: true } } },
+        agents: { entries: { "configured-agent": {} } },
         channels: {
           whatsapp: {
             allowFrom: [ownerNumber, memberNumber],
