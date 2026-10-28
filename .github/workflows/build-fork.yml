@@ -1,8 +1,6 @@
 name: Build Fork
 
 on:
-  push:
-    branches: [rocobot]
   workflow_dispatch:
 
 concurrency:
