@@ -664,7 +664,7 @@ export class ModelRegistry {
         params: model.params,
         headers: undefined,
         compat: model.compat,
-      } as Model,
+      } as Omit<Model, "input">,
       model.input ?? catalog?.input ?? ["text"],
     );
   }
