@@ -1238,7 +1238,7 @@ describe("runPreparedReply media-only handling", () => {
             transcribeProviderAudioFact({ fact, bytes, cfg, workspaceDir: dir }),
         },
       );
-      expect(projected[0]?.content).toBe(ctx.agentText);
+      expect(projected[0]).toMatchObject({ role: "user", content: ctx.agentText });
       expect(await fs.readFile(callsPath, "utf8")).toBe("call\n");
     });
   });
