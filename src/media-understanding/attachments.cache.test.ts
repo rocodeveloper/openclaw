@@ -297,6 +297,7 @@ describe("media understanding attachment cache", () => {
         attachmentIndex: number;
         maxBytes: number;
         timeoutMs: number;
+        signal?: AbortSignal;
       }>();
       await withTestDir({ prefix: "openclaw-media-cache-path-limit-" }, async (base) => {
         const attachmentPath = path.join(base, "photo.png");

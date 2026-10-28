@@ -306,7 +306,7 @@ describe("provider transcript source ownership", () => {
           transcribe: (fact, bytes) =>
             transcribeProviderAudioFact({ fact, bytes, cfg, workspaceDir: dir }),
         });
-        expect(projected[0]?.content).toBe(message.content);
+        expect(projected[0]).toMatchObject({ role: "user", content: message.content });
         expect(await fs.readFile(callsPath, "utf8")).toBe("call\n");
       });
     },
