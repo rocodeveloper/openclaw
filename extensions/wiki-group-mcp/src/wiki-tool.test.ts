@@ -12,53 +12,60 @@ it("executes Wiki tools with group credentials and refuses unauthorized or overs
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "wiki-execute-"));
   const calls: Array<{ authorization: string | undefined; name: string; arguments: unknown }> = [];
   let requests = 0;
-  const server = createServer(async (request, response) => {
-    requests += 1;
-    if (request.method !== "POST") {
-      response.writeHead(405).end();
-      return;
-    }
-    const chunks: Buffer[] = [];
-    for await (const chunk of request) {
-      chunks.push(Buffer.from(chunk));
-    }
-    const input = JSON.parse(Buffer.concat(chunks).toString()) as {
-      id?: number;
-      method: string;
-      params?: { protocolVersion?: string; name?: string; arguments?: { query?: string } };
-    };
-    if (input.method === "notifications/initialized") {
-      response.writeHead(202).end();
-      return;
-    }
-    if (input.method === "tools/call") {
-      calls.push({
-        authorization: request.headers.authorization,
-        name: input.params?.name ?? "",
-        arguments: input.params?.arguments,
-      });
-      if (input.params?.arguments?.query === "failure") {
-        response.writeHead(500).end("fixture-a-credential fixture-b-credential");
+  const fixtureErrors: unknown[] = [];
+  const server = createServer((request, response) => {
+    void (async () => {
+      requests += 1;
+      if (request.method !== "POST") {
+        response.writeHead(405).end();
         return;
       }
-    }
-    const result =
-      input.method === "initialize"
-        ? {
-            protocolVersion: input.params?.protocolVersion,
-            capabilities: { tools: {} },
-            serverInfo: { name: "fixture", version: "1" },
-          }
-        : {
-            content: [
-              {
-                type: "text",
-                text: input.params?.arguments?.query === "large" ? "x".repeat(512) : "group answer",
-              },
-            ],
-          };
-    response.writeHead(200, { "Content-Type": "application/json" });
-    response.end(JSON.stringify({ jsonrpc: "2.0", id: input.id, result }));
+      const chunks: Buffer[] = [];
+      for await (const chunk of request) {
+        chunks.push(Buffer.from(chunk));
+      }
+      const input = JSON.parse(Buffer.concat(chunks).toString()) as {
+        id?: number;
+        method: string;
+        params?: { protocolVersion?: string; name?: string; arguments?: { query?: string } };
+      };
+      if (input.method === "notifications/initialized") {
+        response.writeHead(202).end();
+        return;
+      }
+      if (input.method === "tools/call") {
+        calls.push({
+          authorization: request.headers.authorization,
+          name: input.params?.name ?? "",
+          arguments: input.params?.arguments,
+        });
+        if (input.params?.arguments?.query === "failure") {
+          response.writeHead(500).end("fixture-a-credential fixture-b-credential");
+          return;
+        }
+      }
+      const result =
+        input.method === "initialize"
+          ? {
+              protocolVersion: input.params?.protocolVersion,
+              capabilities: { tools: {} },
+              serverInfo: { name: "fixture", version: "1" },
+            }
+          : {
+              content: [
+                {
+                  type: "text",
+                  text:
+                    input.params?.arguments?.query === "large" ? "x".repeat(512) : "group answer",
+                },
+              ],
+            };
+      response.writeHead(200, { "Content-Type": "application/json" });
+      response.end(JSON.stringify({ jsonrpc: "2.0", id: input.id, result }));
+    })().catch((error: unknown) => {
+      fixtureErrors.push(error);
+      response.destroy();
+    });
   });
   await new Promise<void>((resolve) => {
     server.listen(0, "127.0.0.1", resolve);
@@ -145,6 +152,7 @@ it("executes Wiki tools with group credentials and refuses unauthorized or overs
     ]);
     expect(JSON.stringify([failed, warn.mock.calls])).not.toContain("fixture-a-credential");
     expect(JSON.stringify([failed, warn.mock.calls])).not.toContain("fixture-b-credential");
+    expect(fixtureErrors).toEqual([]);
   } finally {
     server.closeAllConnections();
     await new Promise<void>((resolve, reject) => {

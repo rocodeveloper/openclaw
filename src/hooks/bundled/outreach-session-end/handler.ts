@@ -121,7 +121,8 @@ function runHookScript(script: string, args: string[], stateDir: string): Promis
         }
         if (err) {
           log.warn(`hook-script failed: ${err.message}`);
-          reject(err);
+          const error: Error = err;
+          reject(error);
           return;
         }
         resolve();

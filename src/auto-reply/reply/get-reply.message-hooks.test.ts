@@ -547,7 +547,7 @@ describe("getReplyFromConfig message hooks", () => {
   });
 
   it("completes the reply while retiring unresolved transcript priming", async () => {
-    const prime = createDeferred<void>();
+    const prime = createDeferred();
     let primeSignal: AbortSignal | undefined;
     mocks.applyMediaUnderstanding.mockImplementationOnce(async ({ scheduleAudioPrime }) => {
       scheduleAudioPrime?.(async ({ signal }) => {
