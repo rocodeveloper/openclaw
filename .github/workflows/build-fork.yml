@@ -171,10 +171,10 @@ jobs:
               assert.notEqual(pluginPackage.openclaw?.build?.bundledDist, false, `External ownership for ${plugin}`);
             }
           }
-          const details = execFileSync('tar', ['-tvf', archive], { encoding: 'utf8' }).split('\n');
           for (const script of ['outreach.sh', 'outreach-session-hook.sh']) {
             const entry = `package/dist/bundled/outreach-session-end/${script}`;
             assert(entries.includes(entry), `Missing ${script}`);
+            const details = execFileSync('tar', ['-tvf', archive, entry], { encoding: 'utf8' }).split('\n');
             assert(details.some((line) => line.startsWith('-rw-r--r--') && line.endsWith(` ${entry}`)), `Wrong mode for ${script}`);
           }
           const customEntries = entries.filter((entry) => /^package\/dist\/(extensions\/(session-scope|wiki-group-mcp)\/|bundled\/outreach-session-end\/)/.test(entry) && /\.(js|json|md|sh)$/.test(entry));
