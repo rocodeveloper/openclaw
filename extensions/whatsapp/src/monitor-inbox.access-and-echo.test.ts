@@ -765,53 +765,74 @@ function configureStaffPause(minutes: number) {
   });
 }
 
-function registerStaffMessageHandler(handler: (...args: unknown[]) => unknown) {
+function registerStaffMessageHandler(handler: (...args: unknown[]) => unknown, timeoutMs?: number) {
   const registry = createEmptyPluginRegistry();
   addTestHook({
     registry,
     pluginId: "booking-identity",
     hookName: "staff_message",
     handler: handler as PluginHookRegistration["handler"],
+    timeoutMs,
   });
   initializeGlobalHookRunner(registry);
 }
 
-async function sendFromPhoneThenGuestMessages(fromMeId: string, fromMeTimestamp: number) {
+type InboxSocket = Awaited<ReturnType<typeof openInboxMonitor>>["sock"];
+
+function emitFromPhone(sock: InboxSocket, fromMeId: string, fromMeTimestamp: number) {
+  sock.ev.emit("messages.upsert", {
+    type: "notify",
+    messages: [
+      {
+        key: { id: fromMeId, fromMe: true, remoteJid: "999@s.whatsapp.net" },
+        message: { conversation: "your booking is confirmed" },
+        messageTimestamp: fromMeTimestamp,
+      },
+    ],
+  });
+}
+
+function emitGuestMessages(sock: InboxSocket, idPrefix: string) {
+  sock.ev.emit(
+    "messages.upsert",
+    buildNotifyMessageUpsert({
+      id: `${idPrefix}-guest`,
+      remoteJid: "999@s.whatsapp.net",
+      text: "thanks",
+      timestamp: nowSeconds(),
+    }),
+  );
+  sock.ev.emit(
+    "messages.upsert",
+    buildNotifyMessageUpsert({
+      id: `${idPrefix}-other`,
+      remoteJid: "888@s.whatsapp.net",
+      text: "message in another chat",
+      timestamp: nowSeconds(),
+    }),
+  );
+}
+
+function agentSenders(onMessage: ReturnType<typeof vi.fn>) {
+  return onMessage.mock.calls
+    .map(([message]) => (message as { platform: { senderE164: string } }).platform.senderE164)
+    .toSorted();
+}
+
+async function sendFromPhoneThenGuestMessages(
+  fromMeId: string,
+  fromMeTimestamp: number,
+  deliveries = 1,
+) {
   const { onMessage, listener, sock } = await openInboxMonitor();
   try {
-    sock.ev.emit("messages.upsert", {
-      type: "notify",
-      messages: [
-        {
-          key: { id: fromMeId, fromMe: true, remoteJid: "999@s.whatsapp.net" },
-          message: { conversation: "your booking is confirmed" },
-          messageTimestamp: fromMeTimestamp,
-        },
-      ],
-    });
+    for (let delivery = 0; delivery < deliveries; delivery += 1) {
+      emitFromPhone(sock, fromMeId, fromMeTimestamp);
+      await waitForInboundWorkDrained();
+    }
+    emitGuestMessages(sock, fromMeId);
     await waitForInboundWorkDrained();
-    sock.ev.emit(
-      "messages.upsert",
-      buildNotifyMessageUpsert({
-        id: `${fromMeId}-guest`,
-        remoteJid: "999@s.whatsapp.net",
-        text: "thanks",
-        timestamp: nowSeconds(),
-      }),
-    );
-    sock.ev.emit(
-      "messages.upsert",
-      buildNotifyMessageUpsert({
-        id: `${fromMeId}-other`,
-        remoteJid: "888@s.whatsapp.net",
-        text: "message in another chat",
-        timestamp: nowSeconds(),
-      }),
-    );
-    await waitForInboundWorkDrained();
-    return onMessage.mock.calls
-      .map(([message]) => (message as { platform: { senderE164: string } }).platform.senderE164)
-      .toSorted();
+    return agentSenders(onMessage);
   } finally {
     await listener.close();
   }
@@ -845,7 +866,7 @@ describe("staff_message hook before the WhatsApp staff pause", () => {
     );
   });
 
-  it.each([
+  it.each<{ name: string; handler: () => Promise<unknown>; timeoutMs?: number }>([
     { name: "answers ownSend false", handler: async () => ({ ownSend: false }) },
     { name: "answers nothing", handler: async () => undefined },
     {
@@ -854,9 +875,10 @@ describe("staff_message hook before the WhatsApp staff pause", () => {
         throw new Error("api-service unreachable");
       },
     },
-  ])("starts the staff pause when the plugin $name", async ({ handler }) => {
+    { name: "times out", handler: () => new Promise(() => {}), timeoutMs: 5 },
+  ])("starts the staff pause when the plugin $name", async ({ handler, timeoutMs }) => {
     configureStaffPause(30);
-    registerStaffMessageHandler(handler);
+    registerStaffMessageHandler(handler, timeoutMs);
 
     const senders = await sendFromPhoneThenGuestMessages("staff-reply-1", nowSeconds());
 
@@ -872,5 +894,60 @@ describe("staff_message hook before the WhatsApp staff pause", () => {
 
     expect(senders).toEqual(["+888", "+999"]);
     expect(handler).not.toHaveBeenCalled();
+  });
+
+  it("does not ask plugins about a fromMe message older than the staff pause", async () => {
+    configureStaffPause(30);
+    const handler = vi.fn(async () => ({ ownSend: true }));
+    registerStaffMessageHandler(handler);
+
+    const senders = await sendFromPhoneThenGuestMessages("staff-reply-old", nowSeconds() - 31 * 60);
+
+    expect(senders).toEqual(["+888", "+999"]);
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it("keeps a claimed own send when the same message is delivered again", async () => {
+    configureStaffPause(30);
+    const handler = vi
+      .fn()
+      .mockResolvedValueOnce({ ownSend: true })
+      .mockResolvedValue({ ownSend: false });
+    registerStaffMessageHandler(handler);
+
+    const senders = await sendFromPhoneThenGuestMessages("template-redelivered", nowSeconds(), 2);
+
+    expect(senders).toEqual(["+888", "+999"]);
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+
+  it("pauses a guest message that arrives while plugins still classify the staff message", async () => {
+    configureStaffPause(30);
+    let releaseHandler: (result: { ownSend: boolean }) => void = () => {};
+    let markHandlerStarted: () => void = () => {};
+    const handlerStarted = new Promise<void>((resolve) => {
+      markHandlerStarted = resolve;
+    });
+    registerStaffMessageHandler(
+      () =>
+        new Promise((resolve) => {
+          releaseHandler = resolve;
+          markHandlerStarted();
+        }),
+    );
+    const { onMessage, listener, sock } = await openInboxMonitor();
+
+    try {
+      emitFromPhone(sock, "staff-reply-slow", nowSeconds());
+      await handlerStarted;
+      emitGuestMessages(sock, "staff-reply-slow");
+      await waitForMessageCalls(onMessage, 1);
+      releaseHandler({ ownSend: false });
+      await waitForInboundWorkDrained();
+
+      expect(agentSenders(onMessage)).toEqual(["+888"]);
+    } finally {
+      await listener.close();
+    }
   });
 });

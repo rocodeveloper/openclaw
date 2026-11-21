@@ -118,6 +118,9 @@ const DEFAULT_MODIFYING_HOOK_TIMEOUT_MS_BY_HOOK: Partial<Record<PluginHookName, 
   reply_payload_sending: 15_000,
   resolve_exec_env: 15_000,
 };
+const DEFAULT_CLAIMING_HOOK_TIMEOUT_MS_BY_HOOK: Partial<Record<PluginHookName, number>> = {
+  staff_message: 5_000,
+};
 
 function deepFreezeHookValue<T>(value: T, seen = new WeakSet<object>()): T {
   if ((typeof value !== "object" && typeof value !== "function") || value === null) {
@@ -789,9 +792,6 @@ export function createHookRunner(
     return result;
   }
 
-  /**
-   * Run a sequential claim hook where the first result that `isClaim` accepts wins.
-   */
   async function runClaimingHook<K extends PluginHookName, TResult extends object>(
     hookName: K,
     event: HookEvent<K>,
@@ -836,7 +836,7 @@ export function createHookRunner(
           const promise = Promise.resolve(
             (hook.handler as (event: unknown, ctx: unknown) => Promise<TResult | void>)(event, ctx),
           );
-          return await awaitHook(hook, promise);
+          return await awaitHook(hook, promise, DEFAULT_CLAIMING_HOOK_TIMEOUT_MS_BY_HOOK[hookName]);
         };
         handlerResult = runHandler ? await runHandler(invokeHandler) : await invokeHandler();
       } catch (err) {

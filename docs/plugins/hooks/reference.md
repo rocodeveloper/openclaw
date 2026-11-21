@@ -22,7 +22,7 @@ order breaking ties. Execution depends on the hook kind:
 | Kind             | Execution contract                                                                                                                                  |
 | ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Modify           | Sequential; results merge according to the hook's contract below. Returning a rewrite does not generally change the event passed to later handlers. |
-| Claim            | Sequential; the first `{ handled: true }` wins and skips remaining handlers.                                                                        |
+| Claim            | Sequential; the first `{ handled: true }` (`{ ownSend: true }` for `staff_message`) wins and skips remaining handlers.                              |
 | Gate             | Sequential; a block stops remaining handlers.                                                                                                       |
 | Observe          | Handlers run concurrently; return values are ignored. The emitter may await completion or dispatch fire-and-forget.                                 |
 | Sync modify/gate | Synchronous, in priority order; each handler sees the latest message. Promises are ignored with a warning.                                          |
@@ -95,6 +95,7 @@ The standard runner applies these defaults **per handler**:
 | `agent_end`, `before_compaction`, `after_compaction`, `skill_changed`                                          | 30 seconds                          | Log and continue                                                 |
 | `channel_pairing_requested`                                                                                    | 2 seconds                           | Log and continue                                                 |
 | `gateway_stop`                                                                                                 | 5 seconds                           | Log and continue shutdown                                        |
+| `staff_message`                                                                                                | 5 seconds                           | Log and try the next handler                                     |
 | Other asynchronous hooks, including claim hooks                                                                | No runner timeout unless configured | Log and continue                                                 |
 | `tool_result_persist`, `before_message_write`                                                                  | No asynchronous timeout             | Synchronous errors are logged; failed results are ignored        |
 
@@ -297,8 +298,9 @@ api.on(
 );
 ```
 
-The channel calls the hook only when its staff pause is enabled for the account
-and a handler is registered, so a disabled pause never waits for a plugin. The
+The channel calls the hook only when its staff pause is enabled for the account,
+the message is recent enough to start a pause, and a handler is registered, so a
+disabled pause or an old message never waits for a plugin. The
 event carries `channel`, `accountId`, `conversationId` (the direct chat peer;
 for WhatsApp the E.164 number), and the platform `messageId` and `timestampMs`
 when known. The context carries `channelId`, `accountId`, and `conversationId`.
@@ -306,8 +308,16 @@ when known. The context carries `channelId`, `accountId`, and `conversationId`.
 Handlers run in priority order. The first handler that answers
 `{ ownSend: true }` decides, and later handlers do not run. A handler that
 answers nothing or `{ ownSend: false }` passes the message to the next handler.
-When no handler claims the message, or a handler throws or times out, the staff
-pause starts as it does without the hook. Like other claim hooks, the hook has
-no runner timeout unless the registration or `hooks.timeouts.staff_message`
-sets one; set a short `timeoutMs` because the channel waits for the answer
-before it handles the next step of that message.
+If a handler throws or times out, the runner logs the failure and tries the
+next handler. The staff pause starts only when no handler claims the message.
+
+The runner uses the first timeout that is set: `hooks.timeouts.staff_message`,
+then `hooks.timeoutMs`, then the registration's `timeoutMs`. Without any of
+them, the runner stops waiting for a handler after 5 seconds. Set a short
+`timeoutMs`: while the hook runs, the channel holds guest messages of the same
+chat, so that they see the staff pause if it starts.
+
+WhatsApp can deliver the same message again. The channel remembers a claimed
+message for the pause window and does not ask the hook again for it. A message
+that no handler claimed can reach the hook again on redelivery, so answer the
+same message the same way each time.
