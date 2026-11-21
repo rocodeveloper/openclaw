@@ -111,6 +111,7 @@ const PLUGIN_HOOK_NAMES = [
   "before_reset",
   "inbound_claim",
   "channel_pairing_requested",
+  "staff_message",
   "message_received",
   "message_sending",
   "reply_payload_sending",
@@ -157,6 +158,24 @@ type PluginHookChannelPairingContext = {
   channelId: string;
   accountId?: string;
   senderId: string;
+};
+
+export type PluginHookStaffMessageEvent = {
+  channel: string;
+  accountId: string;
+  conversationId: string;
+  messageId?: string;
+  timestampMs?: number;
+};
+
+export type PluginHookStaffMessageContext = {
+  channelId: string;
+  accountId: string;
+  conversationId: string;
+};
+
+export type PluginHookStaffMessageResult = {
+  ownSend?: boolean;
 };
 
 const pluginHookNameSet = new Set<PluginHookName>(PLUGIN_HOOK_NAMES);
@@ -874,6 +893,11 @@ export type PluginHookHandlerMap = {
   channel_pairing_requested: AsyncPluginHook<
     PluginHookChannelPairingRequestedEvent,
     PluginHookChannelPairingContext
+  >;
+  staff_message: AsyncPluginHook<
+    PluginHookStaffMessageEvent,
+    PluginHookStaffMessageContext,
+    PluginHookStaffMessageResult
   >;
   before_dispatch: AsyncPluginHook<
     PluginHookBeforeDispatchEvent,

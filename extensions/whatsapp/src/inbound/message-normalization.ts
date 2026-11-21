@@ -1,5 +1,6 @@
 import type { AnyMessageContent, WAMessage } from "baileys";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
+import { getGlobalHookRunner } from "openclaw/plugin-sdk/plugin-runtime";
 import { checkInboundAccessControl } from "./access-control.js";
 import { isRecentOutboundMessage } from "./dedupe.js";
 import { hasInboundUserContent } from "./extract.js";
@@ -48,6 +49,56 @@ export function createWhatsAppInboundMessageNormalizer(options: {
     }
     options.logVerbose(`Skipping recent outbound WhatsApp echo ${id} for ${remoteJid}`);
     return true;
+  };
+
+  const isClaimedAsOwnSend = async (params: {
+    chat: string;
+    messageId: string | undefined;
+    timestampMs: number | undefined;
+  }): Promise<boolean> => {
+    const hookRunner = getGlobalHookRunner();
+    if (!hookRunner?.hasHooks("staff_message")) {
+      return false;
+    }
+    const claim = await hookRunner.runStaffMessage(
+      {
+        channel: "whatsapp",
+        accountId: options.accountId,
+        conversationId: params.chat,
+        messageId: params.messageId,
+        timestampMs: params.timestampMs,
+      },
+      { channelId: "whatsapp", accountId: options.accountId, conversationId: params.chat },
+    );
+    return claim?.ownSend === true;
+  };
+
+  const recordStaffMessageUnlessOwnSend = async (params: {
+    cfg: OpenClawConfig;
+    chat: string;
+    messageId: string | undefined;
+    timestampMs: number | undefined;
+  }) => {
+    const pauseMinutes = resolveStaffPauseMinutes({
+      cfg: params.cfg,
+      accountId: options.accountId,
+    });
+    const chatForLog = maskChatForLog(params.chat);
+    if (pauseMinutes > 0 && (await isClaimedAsOwnSend(params))) {
+      options.logInfo(
+        `staff message: account=${options.accountId} chat=${chatForLog} own send, no pause`,
+      );
+      return;
+    }
+    const pauseEndsAt = recordStaffMessage({
+      accountId: options.accountId,
+      chat: params.chat,
+      pauseMinutes,
+      sentAtMs: params.timestampMs,
+    });
+    options.logInfo(
+      `staff message: account=${options.accountId} chat=${chatForLog} ${describeStaffPause({ pauseMinutes, pauseEndsAt })}`,
+    );
   };
 
   const normalize = async (msg: WAMessage) => {
@@ -113,19 +164,12 @@ export function createWhatsAppInboundMessageNormalizer(options: {
     });
     if (!access.allowed) {
       if (!group && isFromMe && from !== socketSession.self.e164) {
-        const pauseMinutes = resolveStaffPauseMinutes({
+        await recordStaffMessageUnlessOwnSend({
           cfg: accessCfg,
-          accountId: options.accountId,
-        });
-        const pauseEndsAt = recordStaffMessage({
-          accountId: options.accountId,
           chat: from,
-          pauseMinutes,
-          sentAtMs: messageTimestampMs,
+          messageId: id,
+          timestampMs: messageTimestampMs,
         });
-        options.logInfo(
-          `staff message: account=${options.accountId} chat=${maskChatForLog(from)} ${describeStaffPause({ pauseMinutes, pauseEndsAt })}`,
-        );
       }
       return null;
     }

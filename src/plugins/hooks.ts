@@ -71,6 +71,9 @@ import type {
   PluginHookBeforeMessageWriteResult,
   PluginHookResolveExecEnvContext,
   PluginHookResolveExecEnvEvent,
+  PluginHookStaffMessageContext,
+  PluginHookStaffMessageEvent,
+  PluginHookStaffMessageResult,
 } from "./hook-types.js";
 import { getPluginValueInstance, runPluginCleanup } from "./plugin-instance-scope.js";
 import {
@@ -144,6 +147,10 @@ type ClaimingHookName = {
       ? K
       : never;
 }[PluginHookName];
+
+const isHandledClaim = (result: { handled: boolean }): boolean => result.handled;
+
+const isOwnSendClaim = (result: PluginHookStaffMessageResult): boolean => result.ownSend === true;
 
 type ModifyingHookPolicy<K extends PluginHookName> = {
   mergeResults?: (
@@ -669,7 +676,7 @@ export function createHookRunner(
   const bindClaimingHook =
     <K extends ClaimingHookName>(hookName: K) =>
     (event: HookEvent<K>, ctx: HookContext<K>) =>
-      runClaimingHook<K, HookResult<K>>(hookName, event, ctx);
+      runClaimingHook<K, HookResult<K>>(hookName, event, ctx, isHandledClaim);
 
   const bindFrozenVoidHook =
     <K extends PluginHookName>(hookName: K) =>
@@ -783,12 +790,13 @@ export function createHookRunner(
   }
 
   /**
-   * Run a sequential claim hook where the first `{ handled: true }` result wins.
+   * Run a sequential claim hook where the first result that `isClaim` accepts wins.
    */
-  async function runClaimingHook<K extends PluginHookName, TResult extends { handled: boolean }>(
+  async function runClaimingHook<K extends PluginHookName, TResult extends object>(
     hookName: K,
     event: HookEvent<K>,
     ctx: HookContext<K> & ClaimingHookAdmission,
+    isClaim: (result: TResult) => boolean,
     runHandler?: (run: () => Promise<TResult | void>) => Promise<TResult | void>,
   ): Promise<TResult | undefined> {
     const hooks = getHooksForName(registry, hookName, ctx);
@@ -798,18 +806,16 @@ export function createHookRunner(
 
     logger?.debug?.(`[hooks] running ${hookName} (${hooks.length} handlers, first-claim wins)`);
 
-    const outcome = await runClaimingHooksList(hooks, hookName, event, ctx, runHandler);
+    const outcome = await runClaimingHooksList(hooks, hookName, event, ctx, isClaim, runHandler);
     return outcome.status === "handled" ? outcome.result : undefined;
   }
 
-  async function runClaimingHooksList<
-    K extends PluginHookName,
-    TResult extends { handled: boolean },
-  >(
+  async function runClaimingHooksList<K extends PluginHookName, TResult extends object>(
     hooks: PluginHookRegistration<K>[],
     hookName: K,
     event: HookEvent<K>,
     ctx: HookContext<K> & ClaimingHookAdmission,
+    isClaim: (result: TResult) => boolean,
     runHandler?: (run: () => Promise<TResult | void>) => Promise<TResult | void>,
   ): Promise<
     | { status: "handled"; result: TResult }
@@ -838,7 +844,7 @@ export function createHookRunner(
         handleHookError({ hookName, pluginId: hook.pluginId, error: err });
       }
       admission?.assertCurrent?.();
-      if (handlerResult?.handled) {
+      if (handlerResult && isClaim(handlerResult)) {
         return { status: "handled", result: handlerResult };
       }
     }
@@ -936,6 +942,7 @@ export function createHookRunner(
       "inbound_claim",
       event,
       ctx,
+      isHandledClaim,
     );
     return outcome.status === "handled" ? outcome.result : undefined;
   }
@@ -963,6 +970,7 @@ export function createHookRunner(
       "inbound_claim",
       event,
       ctx,
+      isHandledClaim,
     );
   }
 
@@ -979,7 +987,20 @@ export function createHookRunner(
       "before_dispatch",
       event,
       ctx,
+      isHandledClaim,
       runHandler,
+    );
+  }
+
+  async function runStaffMessage(
+    event: PluginHookStaffMessageEvent,
+    ctx: PluginHookStaffMessageContext,
+  ): Promise<PluginHookStaffMessageResult | undefined> {
+    return runClaimingHook<"staff_message", PluginHookStaffMessageResult>(
+      "staff_message",
+      event,
+      ctx,
+      isOwnSendClaim,
     );
   }
 
@@ -1154,6 +1175,7 @@ export function createHookRunner(
     runInboundClaimForPlugin,
     runInboundClaimForPluginOutcome,
     runChannelPairingRequested: bindVoidHook("channel_pairing_requested"),
+    runStaffMessage,
     runMessageReceived: bindVoidHook("message_received"),
     runBeforeDispatch,
     runReplyDispatch: bindClaimingHook("reply_dispatch"),

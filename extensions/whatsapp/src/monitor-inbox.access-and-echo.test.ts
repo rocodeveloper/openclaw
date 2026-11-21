@@ -1,6 +1,13 @@
 // WhatsApp monitor inbox access and echo behavior.
 import { cleanMessage } from "baileys";
-import { describe, expect, it, vi } from "vitest";
+import {
+  addTestHook,
+  createEmptyPluginRegistry,
+  initializeGlobalHookRunner,
+  resetGlobalHookRunner,
+  type PluginHookRegistration,
+} from "openclaw/plugin-sdk/channel-test-helpers";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { isRecentOutboundMessage } from "./inbound/dedupe.js";
 import {
   buildNotifyMessageUpsert,
@@ -748,5 +755,122 @@ describe("web monitor inbox", () => {
     expect(onMessage).not.toHaveBeenCalled();
 
     await listener.close();
+  });
+});
+
+function configureStaffPause(minutes: number) {
+  mockLoadConfig.mockReturnValue({
+    channels: { whatsapp: { allowFrom: ["*"], staffPause: { minutes } } },
+    messages: DEFAULT_MESSAGES_CFG,
+  });
+}
+
+function registerStaffMessageHandler(handler: (...args: unknown[]) => unknown) {
+  const registry = createEmptyPluginRegistry();
+  addTestHook({
+    registry,
+    pluginId: "booking-identity",
+    hookName: "staff_message",
+    handler: handler as PluginHookRegistration["handler"],
+  });
+  initializeGlobalHookRunner(registry);
+}
+
+async function sendFromPhoneThenGuestMessages(fromMeId: string, fromMeTimestamp: number) {
+  const { onMessage, listener, sock } = await openInboxMonitor();
+  try {
+    sock.ev.emit("messages.upsert", {
+      type: "notify",
+      messages: [
+        {
+          key: { id: fromMeId, fromMe: true, remoteJid: "999@s.whatsapp.net" },
+          message: { conversation: "your booking is confirmed" },
+          messageTimestamp: fromMeTimestamp,
+        },
+      ],
+    });
+    await waitForInboundWorkDrained();
+    sock.ev.emit(
+      "messages.upsert",
+      buildNotifyMessageUpsert({
+        id: `${fromMeId}-guest`,
+        remoteJid: "999@s.whatsapp.net",
+        text: "thanks",
+        timestamp: nowSeconds(),
+      }),
+    );
+    sock.ev.emit(
+      "messages.upsert",
+      buildNotifyMessageUpsert({
+        id: `${fromMeId}-other`,
+        remoteJid: "888@s.whatsapp.net",
+        text: "message in another chat",
+        timestamp: nowSeconds(),
+      }),
+    );
+    await waitForInboundWorkDrained();
+    return onMessage.mock.calls
+      .map(([message]) => (message as { platform: { senderE164: string } }).platform.senderE164)
+      .toSorted();
+  } finally {
+    await listener.close();
+  }
+}
+
+describe("staff_message hook before the WhatsApp staff pause", () => {
+  installWebMonitorInboxUnitTestHooks();
+
+  afterEach(() => {
+    resetGlobalHookRunner();
+  });
+
+  it("starts no staff pause when a plugin claims the fromMe message as its own send", async () => {
+    configureStaffPause(30);
+    const handler = vi.fn(async () => ({ ownSend: true }));
+    registerStaffMessageHandler(handler);
+    const sentAtSeconds = nowSeconds();
+
+    const senders = await sendFromPhoneThenGuestMessages("template-1", sentAtSeconds);
+
+    expect(senders).toEqual(["+888", "+999"]);
+    expect(handler).toHaveBeenCalledWith(
+      {
+        channel: "whatsapp",
+        accountId: "default",
+        conversationId: "+999",
+        messageId: "template-1",
+        timestampMs: sentAtSeconds * 1000,
+      },
+      { channelId: "whatsapp", accountId: "default", conversationId: "+999" },
+    );
+  });
+
+  it.each([
+    { name: "answers ownSend false", handler: async () => ({ ownSend: false }) },
+    { name: "answers nothing", handler: async () => undefined },
+    {
+      name: "throws",
+      handler: async () => {
+        throw new Error("api-service unreachable");
+      },
+    },
+  ])("starts the staff pause when the plugin $name", async ({ handler }) => {
+    configureStaffPause(30);
+    registerStaffMessageHandler(handler);
+
+    const senders = await sendFromPhoneThenGuestMessages("staff-reply-1", nowSeconds());
+
+    expect(senders).toEqual(["+888"]);
+  });
+
+  it("does not ask plugins when the staff pause is off", async () => {
+    configureStaffPause(0);
+    const handler = vi.fn(async () => ({ ownSend: true }));
+    registerStaffMessageHandler(handler);
+
+    const senders = await sendFromPhoneThenGuestMessages("staff-reply-off", nowSeconds());
+
+    expect(senders).toEqual(["+888", "+999"]);
+    expect(handler).not.toHaveBeenCalled();
   });
 });

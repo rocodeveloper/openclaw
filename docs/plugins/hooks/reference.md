@@ -156,6 +156,7 @@ contracts above; a modifying hook is not an observation hook.
 | --------------------------- | ------------- | -------------------------------------------------------------------------- |
 | `inbound_claim`             | Claim         | Claim an inbound message for the plugin that owns its conversation binding |
 | `channel_pairing_requested` | Observe       | Observe newly created DM pairing requests                                  |
+| `staff_message`             | Claim         | Mark a fromMe message as the system's own send so no staff pause starts    |
 | `message_received`          | Observe       | Observe inbound content, sender, thread, and metadata                      |
 | `message_sending`           | Modify / gate | Rewrite outbound content or cancel delivery                                |
 | `reply_payload_sending`     | Modify / gate | Mutate or cancel normalized reply payloads before delivery                 |
@@ -270,3 +271,43 @@ channel-scoped `senderId`, pairing `code`, and channel metadata. Treat the
 pairing code as a live single-use approval credential and deliver it only to a
 trusted operator sink. Treat `metadata` as untrusted sender-supplied identity
 text. The hook does not include the inbound message body or media.
+
+### Staff messages
+
+A channel with a staff pause, such as WhatsApp `staffPause.minutes`, silences
+the agent in a direct chat after a staff member replies from the paired phone.
+A message that another system sends through the same number, such as a
+WhatsApp Business Cloud API template, also arrives as a fromMe message. Use
+`staff_message` to tell the channel that such a message was your own send, so
+the pause does not start.
+
+```typescript
+api.on(
+  "staff_message",
+  async (event) => {
+    const sent = await wasSentByUs({
+      accountId: event.accountId,
+      peer: event.conversationId,
+      messageId: event.messageId,
+      timestampMs: event.timestampMs,
+    });
+    return sent ? { ownSend: true } : undefined;
+  },
+  { timeoutMs: 3000 },
+);
+```
+
+The channel calls the hook only when its staff pause is enabled for the account
+and a handler is registered, so a disabled pause never waits for a plugin. The
+event carries `channel`, `accountId`, `conversationId` (the direct chat peer;
+for WhatsApp the E.164 number), and the platform `messageId` and `timestampMs`
+when known. The context carries `channelId`, `accountId`, and `conversationId`.
+
+Handlers run in priority order. The first handler that answers
+`{ ownSend: true }` decides, and later handlers do not run. A handler that
+answers nothing or `{ ownSend: false }` passes the message to the next handler.
+When no handler claims the message, or a handler throws or times out, the staff
+pause starts as it does without the hook. Like other claim hooks, the hook has
+no runner timeout unless the registration or `hooks.timeouts.staff_message`
+sets one; set a short `timeoutMs` because the channel waits for the answer
+before it handles the next step of that message.
