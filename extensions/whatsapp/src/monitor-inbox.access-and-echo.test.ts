@@ -779,7 +779,7 @@ function registerStaffMessageHandler(handler: (...args: unknown[]) => unknown, t
 
 type InboxSocket = Awaited<ReturnType<typeof openInboxMonitor>>["sock"];
 
-function emitFromPhone(sock: InboxSocket, fromMeId: string, fromMeTimestamp: number) {
+function emitFromPhone(sock: InboxSocket, fromMeId: string, fromMeTimestamp: number | undefined) {
   sock.ev.emit("messages.upsert", {
     type: "notify",
     messages: [
@@ -811,6 +811,20 @@ function emitGuestMessages(sock: InboxSocket, idPrefix: string) {
       timestamp: nowSeconds(),
     }),
   );
+}
+
+function createHeldStaffMessageHandler() {
+  let release: (result: { ownSend: boolean }) => void = () => {};
+  let markStarted: () => void = () => {};
+  const started = new Promise<void>((resolve) => {
+    markStarted = resolve;
+  });
+  const handler = () =>
+    new Promise<{ ownSend: boolean }>((resolve) => {
+      release = resolve;
+      markStarted();
+    });
+  return { handler, started, release: (result: { ownSend: boolean }) => release(result) };
 }
 
 function agentSenders(onMessage: ReturnType<typeof vi.fn>) {
@@ -946,6 +960,120 @@ describe("staff_message hook before the WhatsApp staff pause", () => {
       await waitForInboundWorkDrained();
 
       expect(agentSenders(onMessage)).toEqual(["+888"]);
+    } finally {
+      await listener.close();
+    }
+  });
+
+  it("pauses a guest message until every pending staff message of the chat is classified", async () => {
+    configureStaffPause(30);
+    let staffMessageCalls = 0;
+    let releaseFirstStaffMessage: (result: { ownSend: boolean }) => void = () => {};
+    let markBothAsked: () => void = () => {};
+    const bothAsked = new Promise<void>((resolve) => {
+      markBothAsked = resolve;
+    });
+    registerStaffMessageHandler(
+      () =>
+        new Promise((resolve) => {
+          staffMessageCalls += 1;
+          if (staffMessageCalls === 1) {
+            releaseFirstStaffMessage = resolve;
+          } else {
+            resolve({ ownSend: true });
+            markBothAsked();
+          }
+        }),
+    );
+    const { onMessage, listener, sock } = await openInboxMonitor();
+
+    try {
+      emitFromPhone(sock, "staff-reply-first", nowSeconds());
+      emitFromPhone(sock, "template-second", nowSeconds());
+      await bothAsked;
+      emitGuestMessages(sock, "staff-reply-first");
+      await waitForMessageCalls(onMessage, 1);
+      releaseFirstStaffMessage({ ownSend: false });
+      await waitForInboundWorkDrained();
+
+      expect(agentSenders(onMessage)).toEqual(["+888"]);
+    } finally {
+      await listener.close();
+    }
+  });
+
+  it("pauses a held guest message received before the pending pause ends, even after it ends", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const startMs = Date.UTC(2026, 10, 21, 15, 0, 0);
+    vi.setSystemTime(startMs);
+    configureStaffPause(1);
+    const held = createHeldStaffMessageHandler();
+    registerStaffMessageHandler(held.handler);
+    const { onMessage, listener, sock } = await openInboxMonitor();
+
+    try {
+      emitFromPhone(sock, "staff-reply-near-expiry", startMs / 1000 - 58);
+      await held.started;
+      emitGuestMessages(sock, "staff-reply-near-expiry");
+      await waitForMessageCalls(onMessage, 1);
+      vi.setSystemTime(startMs + 5_000);
+      held.release({ ownSend: false });
+      await waitForInboundWorkDrained();
+
+      expect(agentSenders(onMessage)).toEqual(["+888"]);
+    } finally {
+      await listener.close();
+    }
+  });
+
+  it("does not extend the staff pause by the time the plugin takes to answer", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const startMs = Date.UTC(2026, 10, 21, 15, 0, 0);
+    vi.setSystemTime(startMs);
+    configureStaffPause(1);
+    const held = createHeldStaffMessageHandler();
+    registerStaffMessageHandler(held.handler);
+    const { onMessage, listener, sock } = await openInboxMonitor();
+
+    try {
+      emitFromPhone(sock, "staff-reply-no-timestamp", undefined);
+      await held.started;
+      vi.setSystemTime(startMs + 5_000);
+      held.release({ ownSend: false });
+      await waitForInboundWorkDrained();
+      vi.setSystemTime(startMs + 62_000);
+      emitGuestMessages(sock, "staff-reply-no-timestamp");
+      await waitForInboundWorkDrained();
+
+      expect(agentSenders(onMessage)).toEqual(["+888", "+999"]);
+    } finally {
+      await listener.close();
+    }
+  });
+
+  it("asks plugins once for concurrent deliveries of the same staff message", async () => {
+    configureStaffPause(30);
+    const held = createHeldStaffMessageHandler();
+    const handler = vi
+      .fn()
+      .mockResolvedValueOnce({ ownSend: false })
+      .mockImplementationOnce(held.handler)
+      .mockResolvedValue({ ownSend: false });
+    registerStaffMessageHandler(handler);
+    const { onMessage, listener, sock } = await openInboxMonitor();
+
+    try {
+      emitFromPhone(sock, "staff-reply-repeated", nowSeconds());
+      await waitForInboundWorkDrained();
+      emitFromPhone(sock, "staff-reply-repeated", nowSeconds());
+      emitFromPhone(sock, "staff-reply-repeated", nowSeconds());
+      await held.started;
+      emitGuestMessages(sock, "staff-reply-repeated");
+      await waitForMessageCalls(onMessage, 1);
+      held.release({ ownSend: false });
+      await waitForInboundWorkDrained();
+
+      expect(handler).toHaveBeenCalledTimes(2);
     } finally {
       await listener.close();
     }

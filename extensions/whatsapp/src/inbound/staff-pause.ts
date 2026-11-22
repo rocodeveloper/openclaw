@@ -16,25 +16,18 @@ export function resolveStaffPauseMinutes(params: {
   return typeof minutes === "number" && Number.isInteger(minutes) && minutes > 0 ? minutes : 0;
 }
 
-function resolveNewPauseEnd(params: {
+export function resolveStaffPauseEnd(params: {
   pauseMinutes: number;
   sentAtMs?: number;
-  now: number;
+  now?: number;
 }): number | undefined {
   if (params.pauseMinutes <= 0) {
     return undefined;
   }
-  const startedAt = Math.min(params.now, params.sentAtMs ?? params.now);
+  const now = params.now ?? Date.now();
+  const startedAt = Math.min(now, params.sentAtMs ?? now);
   const pauseEndsAt = startedAt + params.pauseMinutes * 60_000;
-  return pauseEndsAt > params.now ? pauseEndsAt : undefined;
-}
-
-export function wouldStartStaffPause(params: {
-  pauseMinutes: number;
-  sentAtMs?: number;
-  now?: number;
-}): boolean {
-  return resolveNewPauseEnd({ ...params, now: params.now ?? Date.now() }) !== undefined;
+  return pauseEndsAt > now ? pauseEndsAt : undefined;
 }
 
 export function recordStaffMessage(params: {
@@ -44,8 +37,7 @@ export function recordStaffMessage(params: {
   sentAtMs?: number;
   now?: number;
 }): number | undefined {
-  const now = params.now ?? Date.now();
-  const pauseEndsAt = resolveNewPauseEnd({ ...params, now });
+  const pauseEndsAt = resolveStaffPauseEnd(params);
   if (pauseEndsAt === undefined) {
     return undefined;
   }

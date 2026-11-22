@@ -315,9 +315,15 @@ The runner uses the first timeout that is set: `hooks.timeouts.staff_message`,
 then `hooks.timeoutMs`, then the registration's `timeoutMs`. Without any of
 them, the runner stops waiting for a handler after 5 seconds. Set a short
 `timeoutMs`: while the hook runs, the channel holds guest messages of the same
-chat, so that they see the staff pause if it starts.
+chat. When no handler claims the message, a held guest message that arrived
+before the pause would end is paused, also when the pause ends while the hook
+runs. The pause counts from the earlier of the message timestamp and the time
+the channel received the message, so a slow handler never makes it longer.
 
-WhatsApp can deliver the same message again. The channel remembers a claimed
-message for the pause window and does not ask the hook again for it. A message
-that no handler claimed can reach the hook again on redelivery, so answer the
-same message the same way each time.
+WhatsApp can deliver the same message again. Deliveries of one `messageId`
+that arrive while the hook runs share one hook call. The channel remembers a
+claimed message by its `messageId` for the pause window and does not ask the
+hook again for it. This memory does not survive a Gateway restart. A message
+without a `messageId`, a message that no handler claimed, and any message after
+a restart can reach the hook again on redelivery, so answer the same message
+the same way each time.
