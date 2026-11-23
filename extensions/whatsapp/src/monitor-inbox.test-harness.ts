@@ -35,6 +35,23 @@ const DEFAULT_WEB_INBOX_CONFIG = {
 export const mockLoadConfig: typeof loadConfigMock = loadConfigMock;
 export const upsertPairingRequestMock = pairingUpsertPairingRequestMock;
 
+export const nowSeconds = (offsetMs = 0) => Math.floor((Date.now() + offsetMs) / 1000);
+export const DEFAULT_MESSAGES_CFG = {
+  messagePrefix: undefined,
+  responsePrefix: undefined,
+} as const;
+
+export function createAllowListConfig(allowFrom: string[]) {
+  return {
+    channels: {
+      whatsapp: {
+        allowFrom,
+      },
+    },
+    messages: DEFAULT_MESSAGES_CFG,
+  };
+}
+
 type MockSock = {
   ev: EventEmitter;
   end: AnyMockFn;
@@ -351,6 +368,11 @@ export async function startInboxMonitor(
     },
   });
   return { listener, sock: getSock() };
+}
+
+export async function openInboxMonitor(onMessage: AnyMockFn = vi.fn()) {
+  const { listener, sock } = await startInboxMonitor(onMessage);
+  return { onMessage, listener, sock };
 }
 
 export function buildNotifyMessageUpsert(params: {
