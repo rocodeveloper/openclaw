@@ -20,6 +20,11 @@ import type {
   PluginHookBeforePromptBuildResult,
 } from "./hook-before-agent-start.types.js";
 import type { PluginHookBeforeToolCallResult } from "./hook-before-tool-call-result.js";
+import type {
+  PluginHookAfterCompactionEvent,
+  PluginHookBeforeCompactionEvent,
+  PluginHookBeforeResetEvent,
+} from "./hook-compaction.types.js";
 import type { InputGateDecision } from "./hook-decision-types.js";
 import type {
   PluginHookCronChangedEvent,
@@ -40,6 +45,11 @@ import type {
 } from "./hook-message.types.js";
 import type { PluginHookReplyDispatchEvent } from "./hook-reply-dispatch-event.types.js";
 import type { PluginHookSkillChangedEvent, PluginHookSkillContext } from "./hook-skill.types.js";
+import type {
+  PluginHookStaffMessageContext,
+  PluginHookStaffMessageEvent,
+  PluginHookStaffMessageResult,
+} from "./hook-staff-message.types.js";
 import type { PluginJsonValue } from "./host-hook-json.js";
 import type {
   PluginAgentTurnPrepareEvent,
@@ -51,6 +61,7 @@ import type { SkillInstallSpecMetadata } from "./install-security-scan.types.js"
 import type { PluginHookSessionContext } from "./session-end-transcript.js";
 
 export type { PluginHookReplyDispatchEvent } from "./hook-reply-dispatch-event.types.js";
+export type * from "./hook-staff-message.types.js";
 
 export type {
   PluginHookAgentContext,
@@ -158,24 +169,6 @@ type PluginHookChannelPairingContext = {
   channelId: string;
   accountId?: string;
   senderId: string;
-};
-
-export type PluginHookStaffMessageEvent = {
-  channel: string;
-  accountId: string;
-  conversationId: string;
-  messageId?: string;
-  timestampMs?: number;
-};
-
-export type PluginHookStaffMessageContext = {
-  channelId: string;
-  accountId: string;
-  conversationId: string;
-};
-
-export type PluginHookStaffMessageResult = {
-  ownSend?: boolean;
 };
 
 const pluginHookNameSet = new Set<PluginHookName>(PLUGIN_HOOK_NAMES);
@@ -352,29 +345,6 @@ export type PluginHookBeforeAgentFinalizeResult = {
     idempotencyKey?: string;
     maxAttempts?: number;
   };
-};
-
-type PluginHookBeforeCompactionEvent = {
-  messageCount: number;
-  compactingCount?: number;
-  tokenCount?: number;
-  messages?: unknown[];
-  sessionFile?: string;
-};
-
-type PluginHookBeforeResetEvent = {
-  sessionFile?: string;
-  messages?: unknown[];
-  reason?: string;
-};
-
-type PluginHookAfterCompactionEvent = {
-  messageCount: number;
-  tokenCount?: number;
-  compactedCount: number;
-  sessionFile?: string;
-  /** Physical session generation replaced by this compaction, when it rotated. */
-  previousSessionId?: string;
 };
 
 export type PluginHookInboundClaimResult = {
