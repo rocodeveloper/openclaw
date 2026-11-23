@@ -2,14 +2,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomUUID } from "node:crypto";
 import { clampPositiveTimerTimeoutMs } from "@openclaw/normalization-core/number-coercion";
 import { isPromiseLike } from "@openclaw/normalization-core/promise-like";
-import { createToolPolicyMatcher } from "../agents/tool-policy-match.js";
-import {
-  attachToolAllowlistIntersection,
-  expandToolGroups,
-  normalizeToolList,
-  normalizeToolPolicyName,
-  readToolAllowlistIntersection,
-} from "../agents/tool-policy.js";
+import { attachToolAllowlistIntersection, normalizeToolPolicyName } from "../agents/tool-policy.js";
 import type { ExecutionIdentityAdmissionToken } from "../audit/execution-identity-admission.js";
 import { recordRuntimeActionDecision } from "../audit/runtime-action-decision.js";
 import { finalizeGroupThreadToolReply } from "../auto-reply/group-thread-context.js";
@@ -40,6 +33,7 @@ import type {
   VoidHookRunOptions,
 } from "./hook-runner-types.js";
 import { withHookTimeout } from "./hook-timeout.js";
+import { intersectToolsAllow, readHookToolsAllowRestrictions } from "./hook-tools-allow.js";
 import { isPluginHookReplyDispatchKind } from "./hook-types.js";
 import type {
   PluginAgentTurnPrepareResult,
@@ -354,46 +348,6 @@ export function createHookRunner(
     modelOverride: acc?.modelOverride ?? next.modelOverride,
     providerOverride: acc?.providerOverride ?? next.providerOverride,
   });
-
-  const normalizeHookToolsAllow = (value: unknown): string[] | undefined => {
-    if (value === undefined) {
-      return undefined;
-    }
-    return Array.isArray(value) && value.every((entry) => typeof entry === "string") ? value : [];
-  };
-
-  const readHookToolsAllowRestrictions = (value: unknown): string[][] => {
-    const normalized = normalizeHookToolsAllow(value);
-    if (normalized === undefined) {
-      return [];
-    }
-    const attached = Array.isArray(value) ? readToolAllowlistIntersection(value) : undefined;
-    return attached
-      ? attached.map((restriction) => normalizeHookToolsAllow(restriction) ?? [])
-      : [normalized];
-  };
-
-  const intersectToolsAllow = (left: string[] | undefined, right: string[]): string[] => {
-    if (left === undefined) {
-      return right;
-    }
-    if (left.length === 0 || right.length === 0) {
-      return [];
-    }
-    const normalizedLeft = normalizeToolList(expandToolGroups(left));
-    const normalizedRight = normalizeToolList(expandToolGroups(right));
-    if (normalizedLeft.includes("*")) {
-      return normalizedRight;
-    }
-    if (normalizedRight.includes("*")) {
-      return normalizedLeft;
-    }
-    const matchesLeft = createToolPolicyMatcher({ allow: normalizedLeft });
-    const matchesRight = createToolPolicyMatcher({ allow: normalizedRight });
-    return [...new Set(normalizeToolList([...normalizedLeft, ...normalizedRight]))].filter(
-      (name) => matchesLeft(name) && matchesRight(name),
-    );
-  };
 
   const mergeBeforePromptBuild = (
     acc: PluginHookBeforePromptBuildResult | undefined,
