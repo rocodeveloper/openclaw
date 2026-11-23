@@ -1,3 +1,4 @@
+import { DEFAULT_INGRESS_RETRY_DEAD_LETTER_MIN_AGE_MS as LONGEST_DURABLE_REPLAY_DELAY_MS } from "openclaw/plugin-sdk/channel-outbound";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 import { resolveMergedWhatsAppAccountConfig } from "../account-config.js";
 
@@ -41,8 +42,23 @@ export function recordStaffMessage(params: {
   if (pauseEndsAt === undefined) {
     return undefined;
   }
+  return recordStaffPauseEnd({ ...params, pauseEndsAt });
+}
+
+export function recordStaffPauseEnd(params: {
+  accountId: string;
+  chat: string;
+  pauseEndsAt: number;
+  now?: number;
+}): number {
+  const now = params.now ?? Date.now();
+  for (const [key, pauseEndsAt] of pauseEndsAtByChat) {
+    if (pauseEndsAt + LONGEST_DURABLE_REPLAY_DELAY_MS <= now) {
+      pauseEndsAtByChat.delete(key);
+    }
+  }
   const key = buildChatKey(params);
-  const extendedPauseEndsAt = Math.max(pauseEndsAtByChat.get(key) ?? 0, pauseEndsAt);
+  const extendedPauseEndsAt = Math.max(pauseEndsAtByChat.get(key) ?? 0, params.pauseEndsAt);
   pauseEndsAtByChat.set(key, extendedPauseEndsAt);
   return extendedPauseEndsAt;
 }
@@ -50,19 +66,10 @@ export function recordStaffMessage(params: {
 export function getActiveStaffPauseEnd(params: {
   accountId: string;
   chat: string;
-  now?: number;
+  receivedAtMs: number;
 }): number | undefined {
-  const now = params.now ?? Date.now();
-  const key = buildChatKey(params);
-  const pauseEndsAt = pauseEndsAtByChat.get(key);
-  if (pauseEndsAt === undefined) {
-    return undefined;
-  }
-  if (pauseEndsAt <= now) {
-    pauseEndsAtByChat.delete(key);
-    return undefined;
-  }
-  return pauseEndsAt;
+  const pauseEndsAt = pauseEndsAtByChat.get(buildChatKey(params));
+  return pauseEndsAt !== undefined && params.receivedAtMs < pauseEndsAt ? pauseEndsAt : undefined;
 }
 
 function buildMessageKey(params: { accountId: string; chat: string; messageId: string }): string {

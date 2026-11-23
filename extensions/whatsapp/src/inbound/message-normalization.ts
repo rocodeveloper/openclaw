@@ -13,6 +13,7 @@ import {
   isRememberedOwnSend,
   maskChatForLog,
   recordStaffMessage,
+  recordStaffPauseEnd,
   rememberOwnSend,
   resolveStaffPauseEnd,
   resolveStaffPauseMinutes,
@@ -22,9 +23,8 @@ type StaffMessage = {
   chat: string;
   messageId: string | undefined;
   timestampMs: number | undefined;
+  receivedAtMs: number;
 };
-
-type PendingStaffClassification = { pauseEndsAt: number; ownSend: Promise<boolean> };
 
 export type WhatsAppNormalizedInboundMessage = NonNullable<
   Awaited<ReturnType<ReturnType<typeof createWhatsAppInboundMessageNormalizer>["normalize"]>>
@@ -42,8 +42,8 @@ export function createWhatsAppInboundMessageNormalizer(options: {
   logInfo: (message: string) => void;
 }) {
   const { socketSession, groupMetadata } = options;
-  const pendingStaffClassificationsByChat = new Map<string, Set<PendingStaffClassification>>();
-  const pendingStaffClassificationsByMessage = new Map<string, PendingStaffClassification>();
+  const pendingStaffClassificationsByChat = new Map<string, Set<Promise<boolean>>>();
+  const pendingStaffClassificationsByMessage = new Map<string, Promise<boolean>>();
   const shouldSkipRecentOutboundEcho = (msg: WAMessage): boolean => {
     const id = msg.key?.id ?? undefined;
     const remoteJid = msg.key?.remoteJid;
@@ -84,26 +84,25 @@ export function createWhatsAppInboundMessageNormalizer(options: {
     );
   };
 
-  const recordStaffPause = (params: { chat: string; pauseMinutes: number; sentAtMs: number }) => {
-    const pauseEndsAt = recordStaffMessage({ accountId: options.accountId, ...params });
+  const logStaffPause = (chat: string, pauseMinutes: number, pauseEndsAt: number | undefined) => {
     options.logInfo(
-      `staff message: account=${options.accountId} chat=${maskChatForLog(params.chat)} ${describeStaffPause({ pauseMinutes: params.pauseMinutes, pauseEndsAt })}`,
+      `staff message: account=${options.accountId} chat=${maskChatForLog(chat)} ${describeStaffPause({ pauseMinutes, pauseEndsAt })}`,
     );
   };
 
   const trackPendingClassification = (
     chat: string,
     messageKey: string | undefined,
-    pending: PendingStaffClassification,
+    ownSend: Promise<boolean>,
   ) => {
     const pendingOfChat = pendingStaffClassificationsByChat.get(chat) ?? new Set();
-    pendingOfChat.add(pending);
+    pendingOfChat.add(ownSend);
     pendingStaffClassificationsByChat.set(chat, pendingOfChat);
     if (messageKey !== undefined) {
-      pendingStaffClassificationsByMessage.set(messageKey, pending);
+      pendingStaffClassificationsByMessage.set(messageKey, ownSend);
     }
     const untrack = () => {
-      pendingOfChat.delete(pending);
+      pendingOfChat.delete(ownSend);
       if (pendingOfChat.size === 0) {
         pendingStaffClassificationsByChat.delete(chat);
       }
@@ -111,7 +110,7 @@ export function createWhatsAppInboundMessageNormalizer(options: {
         pendingStaffClassificationsByMessage.delete(messageKey);
       }
     };
-    void pending.ownSend.then(untrack, untrack);
+    void ownSend.then(untrack, untrack);
   };
 
   const classifyStaffMessage = async (message: StaffMessage & { cfg: OpenClawConfig }) => {
@@ -120,16 +119,15 @@ export function createWhatsAppInboundMessageNormalizer(options: {
       accountId: options.accountId,
     });
     const now = Date.now();
-    const sentAtMs = Math.min(now, message.timestampMs ?? now);
+    const sentAtMs = Math.min(message.receivedAtMs, message.timestampMs ?? message.receivedAtMs);
     const pauseEndsAt = resolveStaffPauseEnd({ pauseMinutes, sentAtMs, now });
-    if (pauseEndsAt === undefined || !getGlobalHookRunner()?.hasHooks("staff_message")) {
-      recordStaffPause({ chat: message.chat, pauseMinutes, sentAtMs });
+    if (pauseEndsAt === undefined) {
+      logStaffPause(message.chat, pauseMinutes, undefined);
       return;
     }
+    const chatKey = { accountId: options.accountId, chat: message.chat };
     const ownSendKey =
-      message.messageId === undefined
-        ? undefined
-        : { accountId: options.accountId, chat: message.chat, messageId: message.messageId };
+      message.messageId === undefined ? undefined : { ...chatKey, messageId: message.messageId };
     if (ownSendKey && isRememberedOwnSend(ownSendKey)) {
       logOwnSend(message.chat);
       return;
@@ -138,7 +136,15 @@ export function createWhatsAppInboundMessageNormalizer(options: {
     const shared =
       messageKey === undefined ? undefined : pendingStaffClassificationsByMessage.get(messageKey);
     if (shared) {
-      await shared.ownSend;
+      await shared;
+      return;
+    }
+    if (!getGlobalHookRunner()?.hasHooks("staff_message")) {
+      logStaffPause(
+        message.chat,
+        pauseMinutes,
+        recordStaffMessage({ ...chatKey, pauseMinutes, sentAtMs, now }),
+      );
       return;
     }
     const ownSend = isClaimedAsOwnSend(message).then((claimed) => {
@@ -148,30 +154,29 @@ export function createWhatsAppInboundMessageNormalizer(options: {
         }
         logOwnSend(message.chat);
       } else {
-        recordStaffPause({ chat: message.chat, pauseMinutes, sentAtMs });
+        logStaffPause(message.chat, pauseMinutes, recordStaffPauseEnd({ ...chatKey, pauseEndsAt }));
       }
       return claimed;
     });
-    trackPendingClassification(message.chat, messageKey, { pauseEndsAt, ownSend });
+    trackPendingClassification(message.chat, messageKey, ownSend);
     await ownSend;
   };
 
-  const resolveHeldStaffPauseEnd = async (chat: string): Promise<number | undefined> => {
-    const pending = [...(pendingStaffClassificationsByChat.get(chat) ?? [])];
-    const outcomes = await Promise.allSettled(
-      pending.map((classification) => classification.ownSend),
-    );
-    const heldPauseEnds = pending
-      .filter((_, index) => {
-        const outcome = outcomes[index];
-        return !(outcome?.status === "fulfilled" && outcome.value);
-      })
-      .map((classification) => classification.pauseEndsAt);
-    return heldPauseEnds.length > 0 ? Math.max(...heldPauseEnds) : undefined;
+  const resolveGuestPauseEnd = async (
+    chat: string,
+    receivedAtMs: number,
+  ): Promise<number | undefined> => {
+    const readPauseEnd = () =>
+      getActiveStaffPauseEnd({ accountId: options.accountId, chat, receivedAtMs });
+    const existingPauseEnd = readPauseEnd();
+    if (existingPauseEnd !== undefined) {
+      return existingPauseEnd;
+    }
+    await Promise.allSettled(pendingStaffClassificationsByChat.get(chat) ?? []);
+    return readPauseEnd();
   };
 
-  const normalize = async (msg: WAMessage) => {
-    const receivedAtMs = Date.now();
+  const normalize = async (msg: WAMessage, receivedAtMs: number) => {
     const id = msg.key?.id ?? undefined;
     const remoteJid = msg.key?.remoteJid;
     if (!remoteJid || remoteJid.endsWith("@status") || remoteJid.endsWith("@broadcast")) {
@@ -239,6 +244,7 @@ export function createWhatsAppInboundMessageNormalizer(options: {
           chat: from,
           messageId: id,
           timestampMs: messageTimestampMs,
+          receivedAtMs,
         });
       }
       return null;
@@ -248,11 +254,7 @@ export function createWhatsAppInboundMessageNormalizer(options: {
       !isFromMe &&
       resolveStaffPauseMinutes({ cfg: accessCfg, accountId: options.accountId }) > 0
     ) {
-      const heldPauseEndsAt = await resolveHeldStaffPauseEnd(from);
-      const pauseEndsAt =
-        heldPauseEndsAt !== undefined && receivedAtMs < heldPauseEndsAt
-          ? heldPauseEndsAt
-          : getActiveStaffPauseEnd({ accountId: options.accountId, chat: from });
+      const pauseEndsAt = await resolveGuestPauseEnd(from, receivedAtMs);
       if (pauseEndsAt !== undefined) {
         options.logInfo(
           `staff pause active: account=${options.accountId} chat=${maskChatForLog(from)} until ${new Date(pauseEndsAt).toISOString()}, skipping agent`,

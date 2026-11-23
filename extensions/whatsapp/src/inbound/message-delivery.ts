@@ -442,7 +442,7 @@ export function createWhatsAppMessageDeliveryCoordinator(options: WhatsAppMessag
     if (prepared === null) {
       return "completed";
     }
-    const inbound = prepared ?? (await normalizeInboundMessage(msg));
+    const inbound = prepared ?? (await normalizeInboundMessage(msg, context.receivedAt));
     if (!inbound) {
       return "completed";
     }
@@ -504,6 +504,7 @@ export function createWhatsAppMessageDeliveryCoordinator(options: WhatsAppMessag
     if (upsert.type !== "notify" && upsert.type !== "append") {
       return;
     }
+    const receivedAt = Date.now();
     for (const msg of upsert.messages ?? []) {
       if (!msg.message && msg.messageStubType === WAMessageStubType.CIPHERTEXT) {
         // Baileys re-emits the decrypted copy under the same key after a
@@ -527,7 +528,6 @@ export function createWhatsAppMessageDeliveryCoordinator(options: WhatsAppMessag
         continue;
       }
 
-      const receivedAt = Date.now();
       const skipStaleAppend = shouldSkipStaleAppend(msg, upsert.type);
       const skipRecentOutboundEcho = shouldSkipRecentOutboundEcho(msg);
       const remoteJid = msg.key?.remoteJid;
@@ -580,7 +580,7 @@ export function createWhatsAppMessageDeliveryCoordinator(options: WhatsAppMessag
       }
       if (result.kind === "durable" && result.queueResult.kind === "completed") {
         finishPreparation(undefined);
-        const inbound = await normalizeInboundMessage(msg);
+        const inbound = await normalizeInboundMessage(msg, receivedAt);
         if (inbound) {
           await maybeMarkNonSelfChatReadReceipt(inbound, buildReadReceiptTarget(inbound));
         }
@@ -589,7 +589,7 @@ export function createWhatsAppMessageDeliveryCoordinator(options: WhatsAppMessag
           finishPreparation(null);
         } else {
           try {
-            finishPreparation(await normalizeInboundMessage(msg), true);
+            finishPreparation(await normalizeInboundMessage(msg, receivedAt), true);
           } catch (error) {
             finishPreparation(undefined);
             inboundLogger.warn(

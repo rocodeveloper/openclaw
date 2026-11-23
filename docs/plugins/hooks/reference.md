@@ -96,7 +96,7 @@ The standard runner applies these defaults **per handler**:
 | `channel_pairing_requested`                                                                                    | 2 seconds                           | Log and continue                                                 |
 | `gateway_stop`                                                                                                 | 5 seconds                           | Log and continue shutdown                                        |
 | `staff_message`                                                                                                | 5 seconds                           | Log and try the next handler                                     |
-| Other asynchronous hooks, including claim hooks                                                                | No runner timeout unless configured | Log and continue                                                 |
+| Other asynchronous hooks, including the other claim hooks                                                      | No runner timeout unless configured | Log and continue                                                 |
 | `tool_result_persist`, `before_message_write`                                                                  | No asynchronous timeout             | Synchronous errors are logged; failed results are ignored        |
 
 An emitter can impose a tighter overall lifecycle budget, such as the
@@ -314,16 +314,21 @@ next handler. The staff pause starts only when no handler claims the message.
 The runner uses the first timeout that is set: `hooks.timeouts.staff_message`,
 then `hooks.timeoutMs`, then the registration's `timeoutMs`. Without any of
 them, the runner stops waiting for a handler after 5 seconds. Set a short
-`timeoutMs`: while the hook runs, the channel holds guest messages of the same
-chat. When no handler claims the message, a held guest message that arrived
-before the pause would end is paused, also when the pause ends while the hook
-runs. The pause counts from the earlier of the message timestamp and the time
-the channel received the message, so a slow handler never makes it longer.
+`timeoutMs`: while the hook runs, the channel holds the guest messages of the
+same chat that no earlier pause covers.
+
+Pause decisions use the receipt time of each message, the time the channel
+received it, and not the time the decision runs. The pause counts from the
+earlier of the staff message timestamp and its receipt time, so a slow handler
+never makes it longer. A guest message that the channel received before the
+pause end is paused, also when the pause ends while the hook runs or before the
+channel decides. A guest message that the channel received after the pause end
+goes to the agent.
 
 WhatsApp can deliver the same message again. Deliveries of one `messageId`
 that arrive while the hook runs share one hook call. The channel remembers a
 claimed message by its `messageId` for the pause window and does not ask the
-hook again for it. This memory does not survive a Gateway restart. A message
-without a `messageId`, a message that no handler claimed, and any message after
-a restart can reach the hook again on redelivery, so answer the same message
-the same way each time.
+hook again for it. This memory does not survive a Gateway restart. WhatsApp
+requires a message ID for inbound delivery. An unclaimed message, or a message
+redelivered after a Gateway restart, can reach the hook again if it is still
+recent enough.
