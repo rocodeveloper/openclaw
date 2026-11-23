@@ -170,7 +170,9 @@ export function createWhatsAppInboundMessageNormalizer(options: {
     if (existingPauseEnd !== undefined) {
       return existingPauseEnd;
     }
-    await Promise.allSettled(pendingStaffClassificationsByChat.get(chat) ?? []);
+    await Promise.allSettled(
+      pendingStaffClassificationsByChat.get(chat) ?? new Set<Promise<boolean>>(),
+    );
     return readPauseEnd();
   };
 
