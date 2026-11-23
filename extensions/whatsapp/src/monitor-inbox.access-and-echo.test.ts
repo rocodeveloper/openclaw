@@ -1020,6 +1020,21 @@ describe("staff_message hook before the WhatsApp staff pause", () => {
     });
   });
 
+  it("records the pause of a staff message whose classification starts after the pause end", async () => {
+    const startMs = freezeClock();
+    configureStaffPause(1);
+    await withInbox(async ({ onMessage, sock }) => {
+      emitFromPhone(sock, "staff-reply-late-start", startMs / 1000 - 58, [
+        ...guestMessage("guest-late-start", "999@s.whatsapp.net"),
+        ...guestMessage("other-late-start", "888@s.whatsapp.net"),
+      ]);
+      vi.setSystemTime(startMs + 5_000);
+      await waitForInboundWorkDrained();
+
+      expect(agentSenders(onMessage)).toEqual(["+888"]);
+    });
+  });
+
   it("pauses a guest message that an existing pause covers while plugins classify a later staff message they then claim", async () => {
     const startMs = freezeClock();
     configureStaffPause(1);
@@ -1081,11 +1096,31 @@ describe("staff_message hook before the WhatsApp staff pause", () => {
       await held.started;
       held.release({ ownSend: false });
       await waitForInboundWorkDrained();
+      vi.setSystemTime(startMs + 20_000);
+      emitGuestMessages(sock, "staff-reply-replayed-early");
+      await waitForInboundWorkDrained();
       vi.setSystemTime(startMs + 40_000);
       emitGuestMessages(sock, "staff-reply-replayed");
       await waitForInboundWorkDrained();
 
-      expect(agentSenders(onMessage)).toEqual(["+888", "+999"]);
+      expect(agentSenders(onMessage)).toEqual(["+888", "+888", "+999"]);
+    });
+  });
+
+  it("counts the pause from the receipt time when the staff message timestamp is later", async () => {
+    const startMs = freezeClock();
+    configureStaffPause(1);
+    await withInbox(async ({ onMessage, sock }) => {
+      emitFromPhone(sock, "staff-reply-future", startMs / 1000 + 30);
+      await waitForInboundWorkDrained();
+      vi.setSystemTime(startMs + 50_000);
+      emitGuestMessages(sock, "staff-reply-future-early");
+      await waitForInboundWorkDrained();
+      vi.setSystemTime(startMs + 70_000);
+      emitGuestMessages(sock, "staff-reply-future");
+      await waitForInboundWorkDrained();
+
+      expect(agentSenders(onMessage)).toEqual(["+888", "+888", "+999"]);
     });
   });
 

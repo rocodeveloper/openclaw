@@ -12,7 +12,6 @@ import {
   getActiveStaffPauseEnd,
   isRememberedOwnSend,
   maskChatForLog,
-  recordStaffMessage,
   recordStaffPauseEnd,
   rememberOwnSend,
   resolveStaffPauseEnd,
@@ -118,9 +117,12 @@ export function createWhatsAppInboundMessageNormalizer(options: {
       cfg: message.cfg,
       accountId: options.accountId,
     });
-    const now = Date.now();
     const sentAtMs = Math.min(message.receivedAtMs, message.timestampMs ?? message.receivedAtMs);
-    const pauseEndsAt = resolveStaffPauseEnd({ pauseMinutes, sentAtMs, now });
+    const pauseEndsAt = resolveStaffPauseEnd({
+      pauseMinutes,
+      sentAtMs,
+      now: message.receivedAtMs,
+    });
     if (pauseEndsAt === undefined) {
       logStaffPause(message.chat, pauseMinutes, undefined);
       return;
@@ -140,11 +142,7 @@ export function createWhatsAppInboundMessageNormalizer(options: {
       return;
     }
     if (!getGlobalHookRunner()?.hasHooks("staff_message")) {
-      logStaffPause(
-        message.chat,
-        pauseMinutes,
-        recordStaffMessage({ ...chatKey, pauseMinutes, sentAtMs, now }),
-      );
+      logStaffPause(message.chat, pauseMinutes, recordStaffPauseEnd({ ...chatKey, pauseEndsAt }));
       return;
     }
     const ownSend = isClaimedAsOwnSend(message).then((claimed) => {

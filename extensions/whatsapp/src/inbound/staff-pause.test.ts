@@ -1,3 +1,4 @@
+import { DEFAULT_INGRESS_RETRY_DEAD_LETTER_MIN_AGE_MS } from "openclaw/plugin-sdk/channel-outbound";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 import { beforeEach, describe, expect, it } from "vitest";
 import { WhatsAppConfigSchema } from "../../config-api.js";
@@ -142,15 +143,15 @@ describe("WhatsApp staff pause", () => {
     expect(getActiveStaffPauseEnd({ ...chat, receivedAtMs: now + 2 })).toBe(pauseEndsAt);
   });
 
-  it("keeps an ended pause for messages received before its end, and forgets it a day after the end", () => {
+  it("keeps an ended pause for messages received before its end, and forgets it once the durable replay window after the end has passed", () => {
     const pauseEndsAt = recordStaffMessage({ ...chat, pauseMinutes, now });
     const otherChat = { ...chat, chat: "+15550009999" };
-    const dayMs = 24 * 60 * 60_000;
+    const replayWindowMs = DEFAULT_INGRESS_RETRY_DEAD_LETTER_MIN_AGE_MS;
 
-    recordStaffMessage({ ...otherChat, pauseMinutes, now: now + pauseMs + dayMs - 1 });
+    recordStaffMessage({ ...otherChat, pauseMinutes, now: now + pauseMs + replayWindowMs - 1 });
     expect(getActiveStaffPauseEnd({ ...chat, receivedAtMs: now + 1 })).toBe(pauseEndsAt);
 
-    recordStaffMessage({ ...otherChat, pauseMinutes, now: now + pauseMs + dayMs });
+    recordStaffMessage({ ...otherChat, pauseMinutes, now: now + pauseMs + replayWindowMs });
     expect(getActiveStaffPauseEnd({ ...chat, receivedAtMs: now + 1 })).toBe(undefined);
   });
 
