@@ -7,6 +7,18 @@ authorization boundaries still apply. Read the nearest scoped `AGENTS.md` and th
 matching references below, including when changing callers outside an owner's directory.
 Update instructions at their owner instead of adding competing rules here.
 
+## Rocobot gateway build and install
+
+BookingAgent staging (`vpsp`) and production (`vps2`) run a gateway built from this fork, branch `rocobot`.
+
+- Build: the GitHub Actions workflow `.github/workflows/build-fork.yml` makes each build. Only a manual dispatch starts it: `gh workflow run build-fork.yml -R rocodeveloper/openclaw --ref rocobot` (about 67 minutes). A green run publishes the GitHub Release `rocobot-<version>-<sha12>` with the npm tarball.
+- Runtime: each host runs the installed package at `/usr/lib/node_modules/openclaw` through the unit `openclaw-gateway.service` (`systemctl --user`, `XDG_RUNTIME_DIR=/run/user/0`).
+- The clone `/root/openclaw-fork` is not the runtime. Its `scripts/update-gateway.sh` is the upstream updater: it rebases onto `origin/main` and builds on the host. Do not use it. Do not build OpenClaw on a host.
+- A pushed commit changes nothing on a host. It goes live only when a CI release exists for it, the release is installed, and the gateway restarts.
+- Identify the running build by `commit` in `/usr/lib/node_modules/openclaw/dist/build-info.json`. The version string (`2026.10.7`; the staging unit `Description` says `2026.6.2`) does not identify a fork build.
+- Install: the tarball has no third-party dependencies, so each install includes a dependency install on the host. Staging (pnpm) and production (npm) have different dependency trees now. Keep the previous package for rollback before you install.
+- Approval: each production install needs the owner's approval for that build. Staging installs follow the BookingAgent staging rules.
+
 ## Design priorities
 
 - **One owner per responsibility.** An owner makes a decision or changes authoritative state; callers consume its operations and recorded facts. Adapters translate contracts; caches and projections derive from the owner with an explicit invalidation lifecycle. Transports may need different adapters, never competing owners.
