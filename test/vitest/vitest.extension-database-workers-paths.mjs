@@ -105,6 +105,7 @@ export const databaseWorkerExtensionTestFiles = [
   "extensions/whatsapp/src/monitor-inbox.policy.test.ts",
   "extensions/whatsapp/src/monitor-inbox.reply-context.test.ts",
   "extensions/whatsapp/src/monitor-inbox.socket-lifecycle.test.ts",
+  "extensions/whatsapp/src/monitor-inbox.staff-pause.test.ts",
   "extensions/whatsapp/src/state-migrations.test.ts",
   "extensions/zalo/src/monitor.lifecycle.test.ts",
   "extensions/zalo/src/webhook-spool.test.ts",
