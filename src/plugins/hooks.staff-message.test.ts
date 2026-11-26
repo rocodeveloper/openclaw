@@ -4,9 +4,9 @@ import { createHookRunnerWithRegistry } from "./hooks.test-fixtures.js";
 const event = {
   channel: "whatsapp",
   accountId: "rococode",
-  conversationId: "+441134960425",
+  conversationId: "+15551234567",
 };
-const ctx = { channelId: "whatsapp", accountId: "rococode", conversationId: "+441134960425" };
+const ctx = { channelId: "whatsapp", accountId: "rococode", conversationId: "+15551234567" };
 
 describe("staff_message first claim", () => {
   afterEach(() => {
